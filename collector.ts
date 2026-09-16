@@ -1564,6 +1564,18 @@ export function mergeChats(
     const knownParticipantNames = new Map<string, string>(
       (thread.participants ?? []).map((person) => [person.handle, person.name]),
     );
+    // The window's rule (PR #4) reads the last INBOUND row: the service the
+    // other person's device actually used. `imsg chats` reports the CLUSTER's
+    // newest row instead — Blip's own sends included, and for a merged 1:1
+    // (an email iMessage row and a phone SMS row under one group_id) the phone
+    // alias counts too. Letting that turn a blue DM green is self-reinforcing:
+    // one green send becomes the list row's service, which makes the next send
+    // green, and the conversation never comes back on its own. Refuse that one
+    // direction; the list still names the service everywhere else.
+    const listService = info.service || thread.service;
+    const greenDowngrade = !group
+      && normalizeSendService(thread.service) === "iMessage"
+      && normalizeSendService(listService) !== "iMessage";
     return {
       ...thread,
       aliases,
@@ -1575,7 +1587,7 @@ export function mergeChats(
               ? groupName(thread.chat, groupInfo, knownParticipantNames)
               : namedGroup(thread.name, thread.chat, aliases) || thread.chat))
         : (info.last_name || info.name || thread.name || thread.chat),
-      service: info.service || thread.service,
+      service: greenDowngrade ? thread.service : listService,
       last_text: info.last === thread.last_ts ? info.last_text : messagePreview(thread.last_text),
       pinned,
       pin_order,

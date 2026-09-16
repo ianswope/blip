@@ -1170,6 +1170,42 @@ describe("complete conversation list (mergeChats)", () => {
     expect(out[0]!.unread).toBe(windowThread.unread);
   });
 
+  // Live shape (Ian, 2026-09-16): a 1:1 keyed by an iCloud address, with the
+  // phone number as an alias of the same cluster, every inbound iMessage — and
+  // `imsg chats` reporting the cluster as RCS because its newest row was Blip's
+  // own last send. Blip then passed `--service RCS` and every reply left green,
+  // which made the next list row green too.
+  test("a merged 1:1 the window computed as iMessage is not turned green by the chat list", () => {
+    const merged = {
+      ...chats[0]!, id: "nancy@icloud.com", service: "RCS",
+      aliases: ["nancy@icloud.com", "+15551234567"],
+    };
+    const blue = { ...windowThread, chat: "nancy@icloud.com", service: "iMessage" };
+    expect(mergeChats([blue], [merged], {}, {})[0]!.service).toBe("iMessage");
+  });
+
+  test("a genuinely green DM still takes its service from the list", () => {
+    // The window says SMS too, so there is no disagreement to resolve — and a
+    // never-iMessage thread must keep sending SMS (PR #4's default).
+    const green = { ...windowThread, chat: "+15559990000", service: "SMS" };
+    expect(mergeChats([green], [chats[2]!], {}, {})[0]!.service).toBe("SMS");
+  });
+
+  test("the list may still move a DM the other way, onto iMessage", () => {
+    // Only the downgrade is refused: a green thread whose list row says
+    // iMessage is a thread that went blue, and the failed-iMessage rule in
+    // sendServiceForMessages is what catches it if that is wrong.
+    const green = { ...windowThread, service: "SMS" };
+    expect(mergeChats([green], [chats[0]!], {}, {})[0]!.service).toBe("iMessage");
+  });
+
+  test("a group still takes the list service, since it sends by chat id", () => {
+    const id = "ce5a593a78af408282d61461ade89135";
+    const group = { ...windowThread, chat: id, service: "iMessage" };
+    const listed = { ...chats[1]!, service: "SMS" };
+    expect(mergeChats([group], [listed], {}, {})[0]!.service).toBe("SMS");
+  });
+
   test("pinned rows receive Messages-style names and cleaned latest previews", () => {
     const namedChats = chats.map((chat, index) => index === 0
       ? { ...chat, pin_name: "Pat", last_text: "Photo" }
