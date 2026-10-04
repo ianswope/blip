@@ -53,6 +53,9 @@ import {
   effectiveMark,
   pushUnreadArgs,
   markUnreadOnMac,
+  conversationAct,
+  messagesMutedIds,
+  applyAlertsOff,
   type ImsgMessage,
   type ChatInfo,
 } from "./collector";
@@ -734,6 +737,7 @@ describe("state and allowlist I/O", () => {
       groups: {},
       chatAliases: { OLD: "A" },
       pins: { A: 0 },
+      alertsOff: [],
       toasted: [opaque],
     });
     expect(statSync(p).mode & 0o777).toBe(0o600);
@@ -742,7 +746,7 @@ describe("state and allowlist I/O", () => {
   test("a missing state file yields a safe empty watermark", () => {
     expect(loadState(join(tmp(), "nope.json"))).toEqual({
       watermark: "", readMark: "", unreadCounts: {}, unreadOldest: {}, unreadInitialized: false,
-      selfChats: [], readMarks: {}, unreadSince: {}, groups: {}, chatAliases: {}, pins: {}, toasted: [],
+      selfChats: [], readMarks: {}, unreadSince: {}, groups: {}, chatAliases: {}, pins: {}, alertsOff: [], toasted: [],
     });
   });
 
@@ -751,7 +755,7 @@ describe("state and allowlist I/O", () => {
     writeFileSync(p, "{ this is not json");
     expect(loadState(p)).toEqual({
       watermark: "", readMark: "", unreadCounts: {}, unreadOldest: {}, unreadInitialized: false,
-      selfChats: [], readMarks: {}, unreadSince: {}, groups: {}, chatAliases: {}, pins: {}, toasted: [],
+      selfChats: [], readMarks: {}, unreadSince: {}, groups: {}, chatAliases: {}, pins: {}, alertsOff: [], toasted: [],
     });
   });
 
@@ -1591,6 +1595,17 @@ describe("pushing read state back to the Mac", () => {
     expect(markUnreadOnMac("+15550100011", "/home/u", no).ok).toBe(false);
     expect(markUnreadOnMac("ce5a593a78af408282d61461ade89135").error).toContain("groups");
   });
+
+  test("conversationAct maps pin/mute onto imsg-read and refuses groups", () => {
+    const calls: string[][] = [];
+    const runner = (_bin: string, args: string[]) => {
+      calls.push(args);
+      return { status: 0, stdout: "ok\n", stderr: "" } as never;
+    };
+    expect(conversationAct("pin", "+15550100011", "/home/u", runner).ok).toBe(true);
+    expect(calls[0]).toEqual(["--pin", "+15550100011"]);
+    expect(conversationAct("mute", "ce5a593a78af408282d61461ade89135").ok).toBe(false);
+  });
 });
 
 describe("mark as unread", () => {
@@ -2200,4 +2215,48 @@ describe("Send Later", () => {
   test("a scheduled message never moves the watermark", () => {
     expect(maxTs([msg({ ts: "2026-09-16T15:00:00Z" }), msg(queued)], "")).toBe("2026-09-16T15:00:00Z");
   });
+});
+
+test("Hide Alerts ids survive a shallow poll and clear when the list says so", () => {
+  const row = { id: "+15550100001", aliases: ["pat@example.com"], muted: true } as ChatInfo;
+  expect(messagesMutedIds(null, ["+15550100001"])).toEqual(["+15550100001"]);
+  expect(messagesMutedIds([row], [])).toEqual(["+15550100001", "pat@example.com"]);
+  expect(messagesMutedIds([{ ...row, muted: false }], ["+15550100001"])).toEqual([]);
+});
+
+describe("Hide Alerts across deep and shallow polls", () => {
+  const dm = "+15550100001";
+  const deepRow = { id: dm, aliases: ["pat@example.com"], muted: true } as ChatInfo;
+
+  test("a muted thread stays muted when a shallow poll rebuilds it", () => {
+    // Deep run: the chat list says Hide Alerts is on.
+    const cached = messagesMutedIds([deepRow], []);
+    // Shallow run: no chat list, threads come straight from buildThreads.
+    const [shallow] = buildThreads([msg({ chat: dm, handle: dm, text: "hi" })], "");
+    expect(shallow!.muted).toBe(false);
+    const [rendered] = applyAlertsOff([shallow!], messagesMutedIds(null, cached));
+    expect(rendered!.muted).toBe(true);
+  });
+
+  test("Show Alerts on the Mac unmutes the row at the next chat list", () => {
+    const cached = messagesMutedIds([{ ...deepRow, muted: false }], [dm]);
+    const [shallow] = buildThreads([msg({ chat: dm, handle: dm, text: "hi" })], "");
+    expect(applyAlertsOff([{ ...shallow!, muted: true }], cached)[0]!.muted).toBe(false);
+  });
+
+  test("unchanged rows are reused so the widget can skip identical lists", () => {
+    const [t] = buildThreads([msg({ chat: dm, handle: dm, text: "hi" })], "");
+    const list = [t!];
+    expect(applyAlertsOff(list, [])[0]).toBe(t);
+  });
+});
+
+test("conversationAct surfaces the Mac's reason when a write cannot be verified", () => {
+  const runner = () => ({
+    status: 75, stdout: "",
+    stderr: "imsg-read: Unpin was clicked but Messages' records cannot confirm the conversation is unpinned\n",
+  }) as never;
+  const r = conversationAct("unpin", "+15550100011", "/home/u", runner);
+  expect(r.ok).toBe(false);
+  expect(r.error).toContain("cannot confirm");
 });
