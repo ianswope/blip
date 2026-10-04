@@ -23,7 +23,7 @@ jobs:
           python3 -m py_compile otp-desktop.py
           python3 test_otp_desktop.py
       - name: Mac tools compile (python3 syntax, no macOS needed)
-        run: python3 -m py_compile bridge/mac/imsg bridge/mac/imsg-send bridge/mac/contacts bridge/mac/tcc-check bridge/mac/blip-check bridge/mac/blip-dispatch bridge/mac/imsg-read bridge/mac/imsg-react bridge/mac/calling_codes.py bridge/mac/contact-save bridge/mac/read_state.py
+        run: python3 -m py_compile bridge/linux/blip-bridged bridge/mac/imsg bridge/mac/imsg-send bridge/mac/contacts bridge/mac/tcc-check bridge/mac/blip-check bridge/mac/blip-dispatch bridge/mac/imsg-read bridge/mac/imsg-react bridge/mac/calling_codes.py bridge/mac/contact-save bridge/mac/read_state.py
       - name: read pushes require verified completion (no macOS needed)
         run: python3 bridge/mac/test_read_verification.py
       - name: read state and action verification (synthetic SQLite, no macOS needed)
@@ -58,6 +58,12 @@ jobs:
         run: python3 bridge/mac/test_wire_time.py
       - name: contact creation (synthetic fixtures)
         run: python3 bridge/mac/test_contact_save.py
+      - name: the serve channel exposes only read-only queries (no macOS needed)
+        run: python3 bridge/mac/test_serve.py
+      - name: blip-bridged validates bridge.conf like the shim (no macOS needed)
+        run: python3 bridge/linux/test_bridged_conf.py
+      - name: blip-bridged socket trust, deadlines, filter parity (mocked ssh, no network)
+        run: python3 bridge/linux/test_bridged.py
       - name: shell scripts (bash -n + shellcheck)
         run: |
           bash -n bridge/linux/blip-shim scripts/blip-setup scripts/sync-bridge.sh scripts/demo/blip-shots bridge/mac/install.sh

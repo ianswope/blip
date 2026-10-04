@@ -23,8 +23,8 @@ import { openSync, writeSync, fsyncSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseReadSnapshot, parseReadIntents, queueReadIntent, retryReadIntent, reconcileReadIntents,
   type ReadSnapshot, type ReadIntents } from "./read-sync";
 
@@ -1320,11 +1320,152 @@ export function explainBridgeError(status: number | null, stderr: string): strin
   return last || `imsg exit ${status}`;
 }
 
-export function fetchMessages(limit: number, runner = spawnSync): FetchResult {
-  const res = runner(shimPath("imsg"), ["--json", "recent", String(limit)], {
-    encoding: "utf8",
-    timeout: 15000, maxBuffer: 64 * 1024 * 1024,
+// ------------------------------------------------- the accelerator channel
+
+/**
+ * Where blip-bridged listens: $XDG_RUNTIME_DIR/blip/bridge.sock, or
+ * /tmp/blip-<uid>/blip/bridge.sock without one — the daemon's own rule.
+ * Null when there is no uid to own it.
+ */
+export function bridgeSocketPath(
+  env: Record<string, string | undefined> = process.env,
+  uid: number | null = typeof process.getuid === "function" ? process.getuid() : null,
+): string | null {
+  if (uid === null) return null;
+  const base = env.XDG_RUNTIME_DIR || `/tmp/blip-${uid}`;
+  if (!base.startsWith("/")) return null;
+  return join(base, "blip", "bridge.sock");
+}
+
+/** A real directory (not a symlink) owned by `uid`, no group/other bits. */
+function privateDir(path: string, uid: number): boolean {
+  const st = lstatSync(path);
+  return st.isDirectory() && !st.isSymbolicLink() && st.uid === uid && (st.mode & 0o077) === 0;
+}
+
+/**
+ * The socket path, only when every level of it is provably ours: the base
+ * directory and `blip/` are real directories owned by this uid with no
+ * group/other bits, and the socket is a socket owned by this uid with none
+ * either. Anything else is null — the fast path is skipped, never trusted.
+ *
+ * `/tmp/blip-<uid>` is a name any local user can create first. Checking only
+ * that the socket EXISTS would hand that user every request (search terms
+ * ride stdin) and let them answer with fabricated JSON. blip-bridged refuses
+ * the same layouts on its side and answers only peers with its own uid.
+ */
+export function trustedBridgeSocket(
+  env: Record<string, string | undefined> = process.env,
+  uid: number | null = typeof process.getuid === "function" ? process.getuid() : null,
+): string | null {
+  const sock = bridgeSocketPath(env, uid);
+  if (sock === null || uid === null) return null;
+  try {
+    const dir = dirname(sock);
+    if (!privateDir(dirname(dir), uid) || !privateDir(dir, uid)) return null;
+    const st = lstatSync(sock);
+    if (!st.isSocket() || st.uid !== uid || (st.mode & 0o077) !== 0) return null;
+    return sock;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One reply frame from blip-bridged, or null for "take the one-shot path":
+ * no newline, an unparsable header, a short body, or the daemon's own
+ * `fallback` frame (busy, a deadline, a dead channel). A fallback body is the
+ * daemon's reason, never command output, so it is never handed to a caller.
+ */
+export function parseBridgeFrame(buf: Buffer): { status: number; stdout: string; stderr: string } | null {
+  const nl = buf.indexOf(0x0a);
+  if (nl < 0) return null;
+  let meta: { status?: unknown; len?: unknown; fallback?: unknown };
+  try { meta = JSON.parse(buf.subarray(0, nl).toString("utf8")); } catch { return null; }
+  if (!meta || typeof meta !== "object" || meta.fallback === true) return null;
+  if (typeof meta.len !== "number" || typeof meta.status !== "number") return null;
+  const body = buf.subarray(nl + 1);
+  // A short frame means the channel desynchronised: take the slow path
+  // rather than hand a caller half a JSON document.
+  if (meta.len < 0 || body.length < meta.len) return null;
+  const out = body.subarray(0, meta.len).toString("utf8");
+  return meta.status === 0
+    ? { status: 0, stdout: out, stderr: "" }
+    : { status: meta.status, stdout: "", stderr: out };
+}
+
+/**
+ * Run one bridge command, over the persistent channel when there is one.
+ *
+ * A one-shot `~/bin/imsg` call pays ~90 ms of pure startup before it reads a
+ * row — ssh, blip-dispatch's Python, imsg's own, and opening a 218 MB
+ * chat.db — while the query underneath takes about a millisecond. blip-bridged
+ * holds `imsg serve` channels open so that toll is paid once; `recent 150`
+ * measured 100 ms one-shot against 13 ms here.
+ *
+ * It is an ACCELERATOR, never a dependency. No socket, no socat, a daemon
+ * that died mid-request, a frame that does not parse — anything at all — and
+ * this falls through to the ordinary one-shot path, which is still the only
+ * thing that has to work. That is also what keeps the tests honest: they
+ * inject their own `runner`, and a caller with a custom runner never touches
+ * the socket, so every existing test still exercises the real argv.
+ */
+export function bridgeRun(
+  argv: string[],
+  runner: typeof spawnSync = spawnSync,
+  opts: { input?: string; timeout?: number; maxBuffer?: number } = {},
+  chat = "",
+): { status: number | null; stdout: string; stderr: string; error?: Error } {
+  const timeout = opts.timeout ?? 15000;
+  const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
+  // Routed like every other spawn (source-id.ts). The channel speaks only for
+  // the stock iMessage shim: a conversation another source owns never rides it.
+  const bridge = bridgeFor(chat, "imsg");
+  if (runner === spawnSync && bridge.args.length === 0 && bridge.cmd === shimPath("imsg")) {
+    const fast = viaBridgeSocket(argv, opts.input, timeout, maxBuffer);
+    if (fast) return fast;
+  }
+  const res = runner(bridge.cmd, [...bridge.args, ...argv], {
+    encoding: "utf8", timeout, maxBuffer,
+    ...(opts.input === undefined ? {} : { input: opts.input }),
   });
+  return {
+    status: res.status,
+    stdout: (res.stdout ?? "") as string,
+    stderr: (res.stderr ?? "") as string,
+    ...(res.error ? { error: res.error as Error } : {}),
+  };
+}
+
+/** One request over the unix socket, or null to mean "use the slow path". */
+function viaBridgeSocket(
+  argv: string[],
+  input: string | undefined,
+  timeout: number,
+  maxBuffer: number,
+): { status: number | null; stdout: string; stderr: string } | null {
+  try {
+    const sock = trustedBridgeSocket();
+    if (sock === null) return null;
+    const req = JSON.stringify(input === undefined ? { argv } : { argv, stdin: input });
+    // socat, not a bun/python client: spawning either costs 7-11 ms, which is
+    // most of what the channel just saved. A plain spawn is ~1 ms.
+    // No `encoding`: the default hands back Buffers, and the frame counts
+    // BYTES. Passing "buffer" throws ERR_UNKNOWN_ENCODING in Bun, the catch
+    // below swallowed it, and the fast path silently never ran — every call
+    // quietly took the slow one and the whole channel looked like a no-op.
+    const res = spawnSync("socat", ["-t", String(Math.ceil(timeout / 1000)), "-", `UNIX-CONNECT:${sock}`], {
+      input: req + "\n", timeout, maxBuffer,
+    });
+    if (res.error || res.status !== 0 || !res.stdout) return null;
+    return parseBridgeFrame(res.stdout as Buffer);
+  } catch {
+    return null;
+  }
+}
+
+export function fetchMessages(limit: number, runner = spawnSync): FetchResult {
+  const res = bridgeRun(["--json", "recent", String(limit)], runner);
 
   if (res.error) {
     // spawn itself failed: the imsg shim missing (run blip-setup) or not executable
@@ -1763,10 +1904,7 @@ export const CHAT_LIST_LIMIT = 300;
  * widget's memory. Previews are never persisted (no content on disk).
  */
 export function fetchChats(runner = spawnSync): ChatInfo[] | null {
-  const res = runner(shimPath("imsg"), ["--json", "chats", String(CHAT_LIST_LIMIT)], {
-    encoding: "utf8",
-    timeout: 20000, maxBuffer: 64 * 1024 * 1024,
-  });
+  const res = bridgeRun(["--json", "chats", String(CHAT_LIST_LIMIT)], runner, { timeout: 20000 });
   if (res.status !== 0) return null;
   try {
     const rows = JSON.parse(res.stdout as string);
@@ -2024,7 +2162,7 @@ export function mergeChats(
 }
 
 export function fetchGroups(runner = spawnSync): Record<string, GroupInfo> | null {
-  const res = runner(shimPath("imsg"), ["--json", "groups"], { encoding: "utf8", timeout: 15000, maxBuffer: 64 * 1024 * 1024 });
+  const res = bridgeRun(["--json", "groups"], runner);
   if (res.status !== 0) return null;
   try {
     const rows = JSON.parse(res.stdout as string);

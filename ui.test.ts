@@ -1135,3 +1135,14 @@ test("rendered reactions advance the visible read boundary", () => {
   expect(panel).toContain('String(list[k].seen_ts || list[k].ts || "")');
   expect(panel).toContain("if (list[k].pending === true || list[k].scheduled === true) continue");
 });
+
+describe("the accelerator channel is an optimisation, never a dependency", () => {
+  test("the leader bar supervises blip-bridged, and only the leader", () => {
+    // Two bars would hold two pairs of Mac processes.
+    // From bin_dir, like every other shim: a fixed ~/bin would miss a moved install.
+    expect(widget).toContain('command: [root.binDir + "/blip-bridged"]');
+    const proc = widget.slice(widget.indexOf("id: bridgeProc"), widget.indexOf("id: bridgeRestart"));
+    expect(proc).toContain("running: root.leader && root.bridgeConfLoaded");
+    expect(proc).toContain("onExited: bridgeRestart.restart()");
+  });
+});
