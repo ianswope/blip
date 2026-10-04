@@ -44,6 +44,12 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-04  #128 A monitor that sleeps off DisplayPort no longer crashes Hyprland a second way. With every output gone,
+                 Hyprland reports its workspaces with no monitor, and moving the Blip window home onto one of them
+                 segfaulted Hyprland 0.56 (null monitor in moveWindowToWorkspace, reproduced in a nested Hyprland).
+                 The return move now runs only while a real output exists and the target workspace sits on one; when
+                 the monitor comes back the window goes home as before. 716 tests, door two-way. Brad Larson,
+                 github.com/followbl, X https://x.com/followbl (his second: #113 guarded the map, this guards the move)
 2026-10-02  #126 Search keeps sender-aware self echoes: your "yes" and another group member's "yes" in the same second are two
                  hits again, and a note to yourself is attributed to you whichever copy the Mac returns first. Search now
                  reuses dedupeSelfEcho. Our follow-up feeds outgoing rows first, so a self-thread message iCloud re-synced

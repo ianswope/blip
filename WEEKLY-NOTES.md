@@ -27,7 +27,19 @@ reconstructed on Sunday from memory.
 
 ## 2026-W40 (Mon 28 Sep to Sun 4 Oct): OPEN, post due Sun 4 Oct
 
-8 PRs merged so far, from 5 people.
+9 PRs merged so far, from 6 people.
+
+### Sat 4 Oct: #128
+
+- **#128 a sleeping monitor no longer crashes Hyprland a second way.** Brad
+  Larson (github.com/followbl, X https://x.com/followbl), his second fix in
+  this area: #113 stopped Blip mapping its window with no output; this stops
+  it MOVING the window home while the only monitor is gone, which hit the same
+  null-monitor segfault in Hyprland 0.56 (symbolized core from his own crash on
+  2 Oct, reproduced in a nested Hyprland). The move now waits for a real
+  output; the bug is in Hyprland and still unguarded on their main. Verified:
+  716 tests pass, CI green, door_classify two-way. Not yet checked by anyone: a
+  real display sleep with the fix in place. Merged 4 Oct, deploy pending.
 
 ### Thu 1 Oct and Fri 2 Oct: #120 and #121
 
