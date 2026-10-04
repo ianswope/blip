@@ -29,6 +29,22 @@
   metadata snapshot, including manual unread below Apple's cursor and merged
   phone/email DMs. Re-run `blip-setup` so the Mac picks up `read_state.py`.
 
+- **The persistent channel is safe to leave running.** Review fixes on top
+  of the channel below, before it ships. The socket lives in
+  `$XDG_RUNTIME_DIR/blip` (or a `/tmp/blip-<uid>` tree this user created
+  0700), and both sides verify owner, mode and no symlinks before use: a
+  socket another local user planted is never sent a request and never
+  believed. The daemon answers only its own uid. Every wait on the Mac has a
+  12 s deadline: a link that goes silent costs one deadline, then that ssh
+  session is killed and its slot freed, and ssh's keepalives watch the idle
+  channel; at most four requests queue, the rest fall back at once. The
+  channel applies `hide_spam` / `hide_unknown` exactly as the shim does,
+  re-read on every request, so the fast path no longer shows conversations
+  the slow one hides. Group clusters, pins and Contacts names on the Mac
+  re-read when what they come from changes, including edits Contacts has
+  not yet checkpointed out of its WAL, where a group merged after the channel
+  started used to stay split. A refused `bridge.conf` exits 78 as promised.
+
 - **The conversation list stopped scanning the address book.** With startup
   amortised, what was left was compute — and `chats` was spending 104 ms of
   every request resolving names, because a handle with no exact last-ten key

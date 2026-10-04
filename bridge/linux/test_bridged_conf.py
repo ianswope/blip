@@ -3,10 +3,12 @@
 
 When the dedicated key is absent, _spawn() interpolates python and remote_bin
 into a remote shell command. A hostile bridge.conf must not reach that
-string. Same regexes as blip-shim; same exit 78 (EX_CONFIG)."""
+string. Same regexes as blip-shim; same exit 78 (EX_CONFIG) at startup, and
+a fallback to the one-shot path (where the shim refuses it too) at runtime."""
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,7 +35,7 @@ bridged = load()
 def conf(**overrides):
     base = {
         "host": "you@your-mac",
-        "key": "/home/you/.ssh/blip_ed25519",
+        "key": os.path.join(tempfile.gettempdir(), "blip-test", "blip_ed25519"),
         "remote_bin": "$HOME/.blip/bin",
         "python": "python3",
     }
@@ -45,29 +47,29 @@ class ValidateConf(unittest.TestCase):
     def test_defaults_and_a_plain_host_are_accepted(self):
         bridged.validate_conf(conf())
         bridged.validate_conf(conf(host="mac.local", python="/usr/bin/python3",
-                                  remote_bin="/Users/you/.blip/bin"))
+                                  remote_bin="/opt/blip/bin"))
 
     def test_empty_host_is_allowed_here_main_refuses_it_later(self):
         # read_conf() can run before host= is set; main() exits on empty host.
         bridged.validate_conf(conf(host=""))
 
     def test_a_hostile_python_is_refused(self):
-        with self.assertRaises(SystemExit) as e:
+        with self.assertRaises(bridged.ConfError) as e:
             bridged.validate_conf(conf(python="python3; touch /tmp/pwned"))
-        self.assertEqual(e.exception.code, "blip-bridged: refusing python/remote_bin/key — plain paths only")
+        self.assertEqual(str(e.exception), "blip-bridged: refusing python/remote_bin/key — plain paths only")
 
     def test_a_hostile_remote_bin_is_refused(self):
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(bridged.ConfError):
             bridged.validate_conf(conf(remote_bin="$HOME/.blip/bin; id"))
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(bridged.ConfError):
             bridged.validate_conf(conf(remote_bin="$(id)"))
 
     def test_a_hostile_key_is_refused(self):
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(bridged.ConfError):
             bridged.validate_conf(conf(key="/tmp/key; reboot"))
 
     def test_a_hostile_host_is_refused(self):
-        with self.assertRaises(SystemExit) as e:
+        with self.assertRaises(bridged.ConfError) as e:
             bridged.validate_conf(conf(host="you@your-mac; id"))
         self.assertIn("refusing host", str(e.exception))
 
@@ -76,12 +78,28 @@ class ValidateConf(unittest.TestCase):
             path = os.path.join(tmp, "bridge.conf")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("host=you@your-mac\npython=python3;id\n")
-            os.environ["BLIP_BRIDGE_CONF"] = path
-            try:
-                with self.assertRaises(SystemExit):
-                    bridged.read_conf()
-            finally:
-                os.environ.pop("BLIP_BRIDGE_CONF", None)
+            with self.assertRaises(bridged.ConfError):
+                bridged.read_conf({"HOME": tmp, "BLIP_BRIDGE_CONF": path})
+
+    def test_a_refused_conf_exits_78_like_the_shim(self):
+        # The docstring and CHANGELOG promised EX_CONFIG; sys.exit(<string>)
+        # exited 1. Run the real daemon against a hostile file.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bridge.conf")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("host=you@your-mac\nremote_bin=$(id)\n")
+            env = {"HOME": tmp, "BLIP_BRIDGE_CONF": path, "PATH": os.environ.get("PATH", "")}
+            r = subprocess.run([sys.executable, str(HERE / "blip-bridged")], env=env,
+                               capture_output=True, text=True, timeout=10)
+            self.assertEqual(r.returncode, 78)
+            self.assertIn("refusing", r.stderr)
+
+    def test_no_host_exits_78_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"HOME": tmp, "BLIP_BRIDGE_CONF": os.path.join(tmp, "none"), "PATH": os.environ.get("PATH", "")}
+            r = subprocess.run([sys.executable, str(HERE / "blip-bridged")], env=env,
+                               capture_output=True, text=True, timeout=10)
+            self.assertEqual(r.returncode, 78)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ import { openSync, writeSync, fsyncSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseReadSnapshot, parseReadIntents, queueReadIntent, retryReadIntent, reconcileReadIntents,
   type ReadSnapshot, type ReadIntents } from "./read-sync";
@@ -1293,11 +1293,77 @@ export function explainBridgeError(status: number | null, stderr: string): strin
 
 // ------------------------------------------------- the accelerator channel
 
-/** Where blip-bridged listens, when it is running. */
-export const BRIDGE_SOCK = join(
-  process.env.XDG_RUNTIME_DIR || `/tmp/blip-${typeof process.getuid === "function" ? process.getuid() : ""}`,
-  "blip", "bridge.sock",
-);
+/**
+ * Where blip-bridged listens: $XDG_RUNTIME_DIR/blip/bridge.sock, or
+ * /tmp/blip-<uid>/blip/bridge.sock without one — the daemon's own rule.
+ * Null when there is no uid to own it.
+ */
+export function bridgeSocketPath(
+  env: Record<string, string | undefined> = process.env,
+  uid: number | null = typeof process.getuid === "function" ? process.getuid() : null,
+): string | null {
+  if (uid === null) return null;
+  const base = env.XDG_RUNTIME_DIR || `/tmp/blip-${uid}`;
+  if (!base.startsWith("/")) return null;
+  return join(base, "blip", "bridge.sock");
+}
+
+/** A real directory (not a symlink) owned by `uid`, no group/other bits. */
+function privateDir(path: string, uid: number): boolean {
+  const st = lstatSync(path);
+  return st.isDirectory() && !st.isSymbolicLink() && st.uid === uid && (st.mode & 0o077) === 0;
+}
+
+/**
+ * The socket path, only when every level of it is provably ours: the base
+ * directory and `blip/` are real directories owned by this uid with no
+ * group/other bits, and the socket is a socket owned by this uid with none
+ * either. Anything else is null — the fast path is skipped, never trusted.
+ *
+ * `/tmp/blip-<uid>` is a name any local user can create first. Checking only
+ * that the socket EXISTS would hand that user every request (search terms
+ * ride stdin) and let them answer with fabricated JSON. blip-bridged refuses
+ * the same layouts on its side and answers only peers with its own uid.
+ */
+export function trustedBridgeSocket(
+  env: Record<string, string | undefined> = process.env,
+  uid: number | null = typeof process.getuid === "function" ? process.getuid() : null,
+): string | null {
+  const sock = bridgeSocketPath(env, uid);
+  if (sock === null || uid === null) return null;
+  try {
+    const dir = dirname(sock);
+    if (!privateDir(dirname(dir), uid) || !privateDir(dir, uid)) return null;
+    const st = lstatSync(sock);
+    if (!st.isSocket() || st.uid !== uid || (st.mode & 0o077) !== 0) return null;
+    return sock;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One reply frame from blip-bridged, or null for "take the one-shot path":
+ * no newline, an unparsable header, a short body, or the daemon's own
+ * `fallback` frame (busy, a deadline, a dead channel). A fallback body is the
+ * daemon's reason, never command output, so it is never handed to a caller.
+ */
+export function parseBridgeFrame(buf: Buffer): { status: number; stdout: string; stderr: string } | null {
+  const nl = buf.indexOf(0x0a);
+  if (nl < 0) return null;
+  let meta: { status?: unknown; len?: unknown; fallback?: unknown };
+  try { meta = JSON.parse(buf.subarray(0, nl).toString("utf8")); } catch { return null; }
+  if (!meta || typeof meta !== "object" || meta.fallback === true) return null;
+  if (typeof meta.len !== "number" || typeof meta.status !== "number") return null;
+  const body = buf.subarray(nl + 1);
+  // A short frame means the channel desynchronised: take the slow path
+  // rather than hand a caller half a JSON document.
+  if (meta.len < 0 || body.length < meta.len) return null;
+  const out = body.subarray(0, meta.len).toString("utf8");
+  return meta.status === 0
+    ? { status: 0, stdout: out, stderr: "" }
+    : { status: meta.status, stdout: "", stderr: out };
+}
 
 /**
  * Run one bridge command, over the persistent channel when there is one.
@@ -1350,7 +1416,8 @@ function viaBridgeSocket(
   maxBuffer: number,
 ): { status: number | null; stdout: string; stderr: string } | null {
   try {
-    if (!existsSync(BRIDGE_SOCK)) return null;
+    const sock = trustedBridgeSocket();
+    if (sock === null) return null;
     const req = JSON.stringify(input === undefined ? { argv } : { argv, stdin: input });
     // socat, not a bun/python client: spawning either costs 7-11 ms, which is
     // most of what the channel just saved. A plain spawn is ~1 ms.
@@ -1358,22 +1425,11 @@ function viaBridgeSocket(
     // BYTES. Passing "buffer" throws ERR_UNKNOWN_ENCODING in Bun, the catch
     // below swallowed it, and the fast path silently never ran — every call
     // quietly took the slow one and the whole channel looked like a no-op.
-    const res = spawnSync("socat", ["-t", String(Math.ceil(timeout / 1000)), "-", `UNIX-CONNECT:${BRIDGE_SOCK}`], {
+    const res = spawnSync("socat", ["-t", String(Math.ceil(timeout / 1000)), "-", `UNIX-CONNECT:${sock}`], {
       input: req + "\n", timeout, maxBuffer,
     });
     if (res.error || res.status !== 0 || !res.stdout) return null;
-    const buf = res.stdout as Buffer;
-    const nl = buf.indexOf(0x0a);
-    if (nl < 0) return null;
-    const meta = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { status: number; len: number };
-    const body = buf.subarray(nl + 1);
-    // A short frame means the channel desynchronised: take the slow path
-    // rather than hand a caller half a JSON document.
-    if (typeof meta.len !== "number" || body.length < meta.len) return null;
-    const out = body.subarray(0, meta.len).toString("utf8");
-    return meta.status === 0
-      ? { status: 0, stdout: out, stderr: "" }
-      : { status: meta.status, stdout: "", stderr: out };
+    return parseBridgeFrame(res.stdout as Buffer);
   } catch {
     return null;
   }

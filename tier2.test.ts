@@ -1068,3 +1068,120 @@ describe("bridgeRun: the fast path is optional and invisible", () => {
     expect(res.stderr).toContain("boom");
   });
 });
+
+describe("the accelerator socket is trusted only when it is provably ours", () => {
+  const { bridgeSocketPath, trustedBridgeSocket, parseBridgeFrame } =
+    require("./collector") as typeof import("./collector");
+  const fs = require("node:fs") as typeof import("node:fs");
+  const uid = process.getuid!();
+
+  /** base/blip/bridge.sock, all private, with a real unix socket bound there. */
+  function layout() {
+    const base = mkdtempSync(join(tmpdir(), "blip-rt-"));
+    fs.chmodSync(base, 0o700);
+    const dir = join(base, "blip");
+    mkdirSync(dir, { mode: 0o700 });
+    const sock = join(dir, "bridge.sock");
+    // A bound socket inode outlives the process that bound it.
+    const r = spawnSync("python3", ["-c",
+      "import os,socket,sys; os.umask(0o077); socket.socket(socket.AF_UNIX).bind(sys.argv[1])", sock]);
+    expect(r.status).toBe(0);
+    return { base, dir, sock, env: { XDG_RUNTIME_DIR: base } };
+  }
+
+  test("the path follows the daemon: XDG_RUNTIME_DIR, else /tmp/blip-<uid>", () => {
+    expect(bridgeSocketPath({ XDG_RUNTIME_DIR: "/run/user/1000" }, 1000)).toBe("/run/user/1000/blip/bridge.sock");
+    expect(bridgeSocketPath({}, 1000)).toBe("/tmp/blip-1000/blip/bridge.sock");
+    expect(bridgeSocketPath({ XDG_RUNTIME_DIR: "relative" }, 1000)).toBeNull();
+    expect(bridgeSocketPath({}, null)).toBeNull();
+  });
+
+  test("a private tree with our socket is used", () => {
+    const l = layout();
+    expect(trustedBridgeSocket(l.env, uid)).toBe(l.sock);
+  });
+
+  test("a missing socket is no socket", () => {
+    const l = layout();
+    fs.unlinkSync(l.sock);
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();
+  });
+
+  test("anyone else's tree, or one others can write, is refused", () => {
+    const l = layout();
+    expect(trustedBridgeSocket(l.env, uid + 1)).toBeNull();      // owned by someone else
+    fs.chmodSync(l.dir, 0o777);
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();          // blip/ open to others
+    fs.chmodSync(l.dir, 0o700);
+    fs.chmodSync(l.base, 0o755);
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();          // base readable by others
+    fs.chmodSync(l.base, 0o700);
+    fs.chmodSync(l.sock, 0o666);
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();          // socket open to others
+    fs.chmodSync(l.sock, 0o600);
+    expect(trustedBridgeSocket(l.env, uid)).toBe(l.sock);
+  });
+
+  test("a symlink anywhere in the path is refused, never followed", () => {
+    const l = layout();
+    const other = mkdtempSync(join(tmpdir(), "blip-rt-link-"));
+    fs.chmodSync(other, 0o700);
+    fs.symlinkSync(l.dir, join(other, "blip"));
+    expect(trustedBridgeSocket({ XDG_RUNTIME_DIR: other }, uid)).toBeNull();
+    const linkedBase = join(tmpdir(), `blip-rt-base-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(l.base, linkedBase);
+    expect(trustedBridgeSocket({ XDG_RUNTIME_DIR: linkedBase }, uid)).toBeNull();
+    fs.unlinkSync(linkedBase);
+    fs.unlinkSync(l.sock);
+    fs.writeFileSync(join(other, "real.sock"), "");
+    fs.symlinkSync(join(other, "real.sock"), l.sock);
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();
+  });
+
+  test("a regular file where the socket should be is refused", () => {
+    const l = layout();
+    fs.unlinkSync(l.sock);
+    writeFileSync(l.sock, "", { mode: 0o600 });
+    expect(trustedBridgeSocket(l.env, uid)).toBeNull();
+  });
+
+  test("the fast path asks the trust check, not just existsSync", () => {
+    const src = readFileSync(new URL("./collector.ts", import.meta.url), "utf8");
+    const fast = src.slice(src.indexOf("function viaBridgeSocket"), src.indexOf("export function fetchMessages"));
+    expect(fast).toContain("trustedBridgeSocket()");
+    expect(fast).not.toContain("existsSync");
+  });
+
+  test("frames: a reply, a failure, and the daemon's fallback", () => {
+    const frame = (head: object, body: string) => Buffer.from(JSON.stringify(head) + "\n" + body);
+    expect(parseBridgeFrame(frame({ status: 0, len: 2 }, "[]"))).toEqual({ status: 0, stdout: "[]", stderr: "" });
+    expect(parseBridgeFrame(frame({ status: 1, len: 5 }, "boom\n"))).toEqual({ status: 1, stdout: "", stderr: "boom\n" });
+    // fallback means "ask the one-shot path", even though it has a body and a status
+    expect(parseBridgeFrame(frame({ fallback: true, status: 75, len: 4 }, "busy"))).toBeNull();
+    expect(parseBridgeFrame(frame({ status: 0, len: 10 }, "short"))).toBeNull();
+    expect(parseBridgeFrame(Buffer.from("no newline"))).toBeNull();
+    expect(parseBridgeFrame(Buffer.from("not json\n"))).toBeNull();
+    expect(parseBridgeFrame(frame({ status: "0", len: 2 }, "[]"))).toBeNull();
+  });
+});
+
+describe("bridgeRun keeps source routing", () => {
+  const { bridgeRun } = require("./collector") as typeof import("./collector");
+
+  test("the one-shot spawn is the configured shim, from bin_dir", () => {
+    const home = mkdtempSync(join(tmpdir(), "blip-bindir-"));
+    mkdirSync(join(home, ".config/blip"), { recursive: true });
+    writeFileSync(join(home, ".config/blip/bridge.conf"), "host=you@your-mac\nbin_dir=$HOME/.local/bin\n");
+    const saved = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const seen: string[] = [];
+      const runner = ((cmd: string) => { seen.push(cmd); return { status: 0, stdout: "[]", stderr: "" }; }) as never;
+      bridgeRun(["--json", "groups"], runner);
+      bridgeRun(["--json", "thread", "--chat", "+15551234567", "5"], runner, {}, "+15551234567");
+      expect(seen).toEqual([join(home, ".local/bin/imsg"), join(home, ".local/bin/imsg")]);
+    } finally {
+      process.env.HOME = saved;
+    }
+  });
+});

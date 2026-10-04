@@ -467,8 +467,11 @@ what it is handed. Keep it that way.
   still no `ssh -n` preflight on this path either (a probe without `-n` would
   eat stdin; a probe at all would pay the toll this channel exists to avoid).
   `bridgeRun()` in collector.ts routes through it and
-  falls back to plain `~/bin/imsg` on ANY fault — no socket, no socat, a dead
-  daemon, a frame that will not parse, a short body. Three rules:
+  falls back to the one-shot shim (`bridgeFor(chat, "imsg")`, so `bin_dir=`
+  and source routing hold; a conversation another source owns never rides the
+  channel) on ANY fault — no socket, no socat, a dead daemon, a frame that
+  will not parse, a short body, or the daemon's own `{"fallback":true}` frame
+  (busy, a deadline, a dead channel, a refused bridge.conf). Five rules:
   (1) A caller that passes its own `runner` NEVER touches the socket. That is
   what keeps the suite honest — every existing test injects a runner and
   asserts on real argv.
@@ -478,6 +481,18 @@ what it is handed. Keep it that way.
   (3) A request carries `stdin` separately, so message text still never rides
   argv. Framing is `{"status","len"}\n` + exactly len BYTES — length-counted,
   not escaped, or a 122 KB payload gets re-encoded into a JSON string.
+  (4) The socket is trusted only when provably ours: `$XDG_RUNTIME_DIR/blip`
+  (or `/tmp/blip-<uid>/blip`, a name anyone can take first) must be real
+  directories owned by this uid with no group/other bits, and the socket a
+  socket owned by this uid, mode 600. `trustedBridgeSocket()` checks it with
+  lstat before every connect, the daemon refuses to start otherwise and
+  answers only peers with its uid (SO_PEERCRED). `existsSync` is not a check.
+  (5) Every wait on the Mac has a deadline (spawn handshake, write, the whole
+  reply; 12 s): a silent half-open peer costs one deadline, then that ssh
+  child is killed and reaped and the slot is free. At most 4 clients queue;
+  the rest get a fallback frame at once. The daemon prepends the shim's
+  `--hide-spam`/`--hide-unknown`, reading bridge.conf per request as the shim
+  does — `test_bridged.py` runs the real shim against a fake ssh and compares.
   Channels are POOLED (2): Blip refreshes the list and reloads the open
   conversation in parallel on every ping, and one channel would queue the
   reload behind a 259 ms `chats` call. Do not pass `encoding: "buffer"` to
