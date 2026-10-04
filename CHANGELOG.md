@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A send waits for the Automation prompt (#131, David Benedic).** `imsg-send`
+  waited only 15 seconds for Messages, shorter than the Automation Allow
+  prompt, so a first send died before anyone could click. It now waits 150
+  seconds, the same budget as the rest of the bridge, and a timeout exits with
+  one sentence that says to allow Automation on the Mac. Re-run `blip-setup`.
+
 - **A monitor that sleeps off DisplayPort no longer crashes Hyprland a second
   way.** When the only monitor disappears, Hyprland reports its workspaces with
   no monitor until it comes back. Blip saw the monitor change, tried to move its
