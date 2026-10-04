@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-2.5.0-0a84ff?style=flat-square">
+  <img alt="version" src="https://img.shields.io/badge/version-2.6.2-0a84ff?style=flat-square">
   <img alt="Omarchy" src="https://img.shields.io/badge/Omarchy-plugin-5fd7ff?style=flat-square">
   <img alt="QuickShell" src="https://img.shields.io/badge/QuickShell-QML-0a84ff?style=flat-square">
   <img alt="bun" src="https://img.shields.io/badge/bun-TypeScript-f9f1e1?style=flat-square">
@@ -84,7 +84,7 @@ people who showed up with pull requests. What is in it now:
 - **Search** conversations by name, then messages; **new conversation** from a
   contact search; **reply from a toast**; failed-delivery flags.
 - **One source.** The Mac-side tools ship in this repo; `blip-setup` installs
-  everything including a dedicated ssh key the Mac confines to the five
+  everything including a dedicated ssh key the Mac confines to the six
   bridge tools.
 - **Audited.** A full security + privacy audit, every finding fixed or
   documented — [docs/SECURITY.md](docs/SECURITY.md), [docs/PRIVACY.md](docs/PRIVACY.md).
@@ -120,6 +120,7 @@ Linux side. If the Mac is asleep, the widget dims and says so.
 - contact photo (from the Mac's Contacts), a group's own photo from Messages when it has one, or initials · name, preview, time
 - **pinned conversations mirrored from Messages on the Mac**, kept in the same order at the top (read-only)
 - **blue dot** that stays until you open *that* conversation — iMessage semantics, not "I glanced at the list"
+- **mark as unread** — right-click a row, or `U` in the list; DMs also click Messages' own menu on the Mac so the phone can follow
 - groups titled the way Messages.app titles them: the group's name, else its members
 
 </td>
@@ -164,10 +165,12 @@ Linux side. If the Mac is asleep, the widget dims and says so.
   this to `~/.config/hypr/bindings.lua` — it asks **Hyprland** where the
   window is (front → close, elsewhere → focus, none → create) instead of
   the plugin, because after an Omarchy plugin update the plugin's IPC can
-  answer from a stale instance until the shell restarts:
+  answer from a stale instance until the shell restarts. Match the Quickshell
+  class and exact app title (`Blip` or `Blip (N)`); a browser or editor titled
+  "Blip documentation" must never be focused or closed by this shortcut:
   ```lua
   o.bind("SUPER + M", "Blip messages", [[sh -c '
-    blip() { hyprctl clients -j | jq -r ".[] | select(.title | startswith(\"Blip\")) | .address" | head -1; }
+    blip() { hyprctl clients -j | jq -r ".[] | select(.class == \"org.quickshell\" and (.title | test(\"^Blip( [(][0-9]+[)])?$\"))) | .address" | head -1; }
     a=$(blip)
     if [ -z "$a" ]; then
       omarchy-shell nixfred.blip app >/dev/null
@@ -259,6 +262,21 @@ Blip renders in the first of these it finds, so it is optional either way:
 bubble text in pixels so Blip can be larger than the rest of the shell;
 unset, it follows Omarchy's type size.
 
+**Scroll speed.** Blip applies the wheel delta the compositor delivers, 1:1,
+so Hyprland's `input:scroll_factor` decides the speed as it does everywhere
+else. Some hi-res wheels send several notches per physical click (an MX
+Master 4 sends four, which is a whole 600 px window per click). Slow Blip
+alone with
+
+```
+# ~/.config/blip/bridge.conf — re-read on save, no restart
+scroll_gain=0.25           # wheel: 0.05–10, default 1
+touchpad_scroll_gain=0.5   # touchpad, separately: same range, default 1
+```
+
+`0.25` makes one MX Master click about 120 px, roughly five lines. `status`
+reports the live value as `scroll_gain=`.
+
 > **Blip ships no fonts.** SF Pro is Apple's and its licence forbids
 > redistribution, so it is not carried in this repo — note that even the AUR
 > package fetches it from Apple rather than mirroring it.
@@ -299,6 +317,9 @@ unset, it follows Omarchy's type size.
 > commands below, in order, and stop at step 3 until the human confirms the
 > two grants on the Mac. Never send a test message to anyone but the user's
 > own number. Do not edit `~/.ssh/config` beyond what `blip-setup` writes.
+> The wizard reads two answers from stdin (Enter before the permission
+> check, y/N for the Inter font), so `printf '\nn\n' | blip-setup you@mac`
+> runs it unattended once the human has confirmed the grants.
 > Verify with `blip-check`, not by reading `chat.db` yourself. Before
 > changing code, read [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md).
 
@@ -306,14 +327,21 @@ unset, it follows Omarchy's type size.
 `~/.config/omarchy/plugins/nixfred.blip` and adds the bar widget)
 
 ```sh
-omarchy plugin add https://github.com/nixfred/blip.git --enable
+omarchy plugin add https://github.com/nixfred/blip.git --enable --yes
 ```
+
+It installs the current `main`, not a tagged release, so a fresh install
+always has the latest fixes. `--yes` answers Omarchy's "only add plugins you
+trust" prompt; drop it to be asked. Run it from a terminal inside your
+Omarchy session: enabling talks to the running shell, so over a bare ssh
+session it clones the plugin and then stops with `OMARCHY_PATH is not set`.
 
 (Manual alternative: `git clone https://github.com/nixfred/blip
 ~/.config/omarchy/plugins/nixfred.blip`, then step 4.)
 
 **2. Run the wizard** (idempotent — re-run any time; it prints the
-`pacman` line for any missing Linux dependency and stops)
+`pacman` line for exactly the Linux packages you are missing and stops,
+and names `ffmpeg` and `mpv` as optional: voice messages need them)
 
 ```sh
 ~/.config/omarchy/plugins/nixfred.blip/scripts/blip-setup you@your-mac
@@ -321,7 +349,10 @@ omarchy plugin add https://github.com/nixfred/blip.git --enable
 
 It writes `~/.config/blip/bridge.conf`, adds an ssh ControlMaster block
 (polling costs ~50 ms instead of a handshake), installs the bridge shim as
-`~/bin/imsg`, `~/bin/imsg-send`, `~/bin/contacts`, copies the Mac tools to
+`~/bin/imsg`, `~/bin/imsg-send`, `~/bin/imsg-read`, `~/bin/imsg-react`,
+`~/bin/contacts`, `~/bin/contact-save` (set `bin_dir=~/.local/bin`
+in `bridge.conf`, or `BLIP_BIN_DIR`, before running it to install them
+somewhere else — Blip reads the same key to find them), copies the Mac tools to
 `~/.blip/bin` on the Mac and runs `install.sh` there, generates a
 **dedicated ssh key** (`~/.ssh/blip_ed25519`) that the Mac confines to the
 bridge tools and nothing else, then smoke-tests the bridge without printing
@@ -374,6 +405,18 @@ the same entry, exactly as Omarchy's clock takes its `format`:
 { "id": "nixfred.blip", "timeFormat": "HH:mm", "dateFormat": "dd.MM", "dateFormatWithYear": "dd.MM.yyyy" }
 ```
 
+**Smooth scrolling (opt-in).** By default a mouse-wheel notch lands at once.
+With
+
+```
+# ~/.config/blip/bridge.conf — re-read on save, no restart
+smooth_scroll=on
+```
+
+a notch glides to its place (180 ms, easing out) instead; notches that
+arrive mid-glide add up, so a fast spin never loses distance. Touchpad
+scrolling is always direct. `status` shows `smooth_scroll=on` while it is on.
+
 **5. (Optional) `SUPER+M` for the app window** — the Lua snippet under
 "The app" above.
 
@@ -383,12 +426,20 @@ the same entry, exactly as Omarchy's clock takes its `format`:
 safe to re-run.
 
 **Toasts** — desktop notifications fire only for handles you list; everything
-else still counts and still shows.
+else still counts and still shows. Put this in
+`~/.config/blip/allowlist.json`; it is re-read every poll, so no restart.
 
-```jsonc
-// ~/.config/blip/allowlist.json — re-read every poll, no restart
+```json
 { "allow": ["+15551234567", "them@icloud.com"] }
 ```
+
+Strict JSON — **no comments, no trailing commas.** A file that does not parse
+is treated as an empty list, silently, so a stray `//` line reads exactly like
+having no allowlist at all: everything still counts on the badge, and nothing
+ever toasts. If toasts are not firing, check the file parses
+(`jq . ~/.config/blip/allowlist.json`) before anything else. List each handle a
+person actually messages from — someone with an iCloud address *and* a phone
+needs both lines, or they go quiet whenever they switch.
 
 **Mute (spam)** — the allowlist's opposite: a muted conversation does not
 show at all. No sidebar row, no unread count, no toast. This is the knob for
@@ -399,8 +450,10 @@ whack-a-mole, so list the words instead: the PAC platform's name (`ActBlue`,
 `WinRed`) and the opt-out footer the law makes every one of them carry
 (`Stop2End`) survive the rotation.
 
-```jsonc
-// ~/.config/blip/mutelist.json — re-read every poll, no restart
+Put this in `~/.config/blip/mutelist.json` — re-read every poll, and strict
+JSON exactly like the allowlist above:
+
+```json
 { "mute": ["ActBlue", "WinRed", "Stop2End", "78462"] }
 ```
 
@@ -442,6 +495,57 @@ so `--hide-spam` / `--hide-unknown` exist on the far side.
 (`123 45 678`, `07700 900123`) get their name and photo the way Contacts
 resolves them: the Mac's own region fills in the code. Green-bubble (SMS/RCS)
 conversations send on their own service automatically.
+
+**Prefer iMessage on mixed 1:1s.** A DM that used to be blue and then got an
+RCS inbound (someone in a mixed-platform group, Continuity falling back)
+otherwise sends RCS/SMS next. Opt in:
+
+```
+# ~/.config/blip/bridge.conf — re-read every poll, no restart
+prefer_imessage=on
+```
+
+A thread with a successful iMessage in the loaded window then stays
+iMessage. A never-iMessage RCS/SMS thread stays green. A failed iMessage to
+a phone still flips to SMS so the send does not stick. Groups are unchanged
+(they send by chat id). Default is off.
+
+**Tapbacks (experimental).** Right-click a message, or select it
+(`Shift+PgUp`) and press `Ctrl+E`: the six classic tapbacks (❤️ 👍 👎 😂 ‼️ ❓)
+lead the menu, yours highlighted, and `1`–`6` (or `←`/`→` and `Enter`) pick one; choosing yours again
+takes it back. Behind it, `imsg-react` performs Messages' own tapback action on the
+Mac through Accessibility, the grant `imsg-read` already holds. Those actions
+are named in the Mac's language and Apple may rename them, so the menu row and
+the tool are off unless you turn them on:
+
+```
+# ~/.config/blip/bridge.conf
+tapbacks=on
+```
+
+From a terminal:
+
+```sh
+imsg-react --guid <message GUID> love          # dry run: says what it would do
+imsg-react --guid <message GUID> love --yes    # does it
+imsg-react --guid <message GUID> love --remove --yes
+```
+
+Success is the tapback row appearing in `chat.db`, never the screen. Your
+choice shows on the bubble at once, dimmed, until the conversation reloads with
+what `chat.db` says; a failure takes it away and says why on the status line,
+once. A bubble that does not offer the action is reported
+and left alone; there is no guess at a neighbouring action and no blind retry. It works on 1:1 conversations and
+text bubbles only (no groups, pictures, links or cards yet), with an
+English-language Mac. Messages comes to the front for a few seconds while it
+runs: anyone typing on the Mac just then types into that conversation, as with
+`push_read=thread`. It needs the read-push grants first: run
+`ssh your-mac 'python3 "$HOME/.blip/bin/blip-check" --markread'` once while
+someone sits at the Mac to click Allow (over ssh, so the grant is sshd's, not
+Terminal's); until then `imsg-react` refuses rather than raise a prompt nobody
+answers. Needs a
+`blip-setup` re-run: it installs `imsg-react` and the new `blip-dispatch` on
+the Mac and the `imsg-react` shim on Linux.
 
 **Two or more monitors:** one bar widget per screen is normal; only the one
 on the first screen polls and owns the app window, the others show the
@@ -529,11 +633,11 @@ omarchy-restart-shell
 (`omarchy plugin disable nixfred.blip` instead, to take it off the bar but keep
 the checkout.)
 
-**2. The shims.** `blip-setup` installs `blip-shim` as four tools in `~/bin`,
+**2. The shims.** `blip-setup` installs `blip-shim` as five tools in `~/bin`,
 backing up anything it displaced as `<tool>.pre-blip.<epoch>`:
 
 ```bash
-rm -f ~/bin/imsg ~/bin/imsg-send ~/bin/imsg-read ~/bin/contacts
+rm -f ~/bin/imsg ~/bin/imsg-send ~/bin/imsg-read ~/bin/imsg-react ~/bin/contacts ~/bin/contact-save
 ls ~/bin/*.pre-blip.* 2>/dev/null        # restore any of these you want back
 ```
 
@@ -600,6 +704,13 @@ Contacts fingerprint still match. The feature adds no settings page or display
 name overrides. Configuration stays in `bridge.conf`. Review requires no Swift
 helper; the optional availability check needs Automation → Contacts on the Mac.
 
+## Save a new contact
+
+When **Review contact** finds no card for a sender, choose **Save new contact**,
+enter a name, review the fields, and confirm **Save to Contacts**. Blip checks
+for duplicates and reads the new card back before reporting success. Existing
+cards are not edited or merged. See [contact saving setup](docs/SAVE-CONTACT.md).
+
 ## Keyboard
 
 | where | key | does |
@@ -620,6 +731,7 @@ helper; the optional availability check needs Automation → Contacts on the Mac
 | thread | `↑` / `↓` | move through draft lines; on the first / last visual line, jump to the beginning / end of the draft |
 | thread | `Enter` · `Ctrl+C` · `Ctrl+R` (bubble selected) | open its attachment or link · copy its text, or the picture itself when the bubble is only a picture · quote it into the compose field (`> …`) |
 | thread | `PgUp` / `PgDn` (Fn+`↑`/`↓` on a Mac keyboard) | select the topmost / bottommost visible bubble, then a screen further each press — also with text in the compose field, since they move no caret |
+| thread | `Ctrl+E` (bubble selected) · `1`–`6` or `←`/`→` + `Enter` | the message menu under the bubble · with `tapbacks=on`, the tapback with that number, or the one the arrows marked (the one you have takes it back) |
 | thread | `Shift+PgUp` / `Shift+PgDn` | one bubble at a time from anywhere in a draft, without moving the caret first |
 | thread | `Home` / `End` · `Ctrl+Home` / `Ctrl+End` | start / end of the current line · start / end of the whole draft |
 | thread | `Esc` | back to list (or clear a text selection first) |
@@ -660,7 +772,30 @@ qs -p /usr/share/omarchy/shell ipc call nixfred.blip typecode           # type t
 qs -p /usr/share/omarchy/shell ipc call nixfred.blip copycode           # or copy it
 ```
 
-**Security codes.** When a text arrives that looks like a one-time code
+### Security-code autofill
+
+Set `otp_autofill=on` in `~/.config/blip/bridge.conf` to offer new codes beside
+the focused field. Click **Fill code** to insert, or **×** to dismiss. The
+prompt shares Blip's fonts and colors and handles separate digit boxes. Sites
+need not declare `autocomplete="one-time-code"`; accessible labels can identify
+the field. Codes expire after five minutes, even if you change focus.
+
+This uses Linux accessibility, with no browser extension. When field bounds
+are unavailable the prompt appears at the top right; when field metadata is
+unavailable, select the intended input before clicking. Known chat, password,
+phone and search fields are excluded. It does not copy the code or press Enter.
+The field prompt does not require `automation=on` and replaces the legacy
+code toast and `typecode`/`copycode` handling while enabled.
+
+**The text must reach the Mac first.** If it appears only on the iPhone, check
+**Settings → Apps → Messages → Text Message Forwarding** and enable the Mac
+used by Blip. Both devices must use the same Apple Account; Messages in iCloud
+can provide forwarding automatically. See [Apple's forwarding guide](https://support.apple.com/en-au/102545).
+
+Linux dependencies, browser activation and troubleshooting:
+[Autofill setup](docs/AUTOFILL.md).
+
+**Legacy security-code toast.** With autofill off, when a text looks like a one-time code
 ("Your verification code is 483920", "G-482913", the origin-bound
 `@example.com #493857` form), Blip toasts it. Click the toast to copy it, or
 bind `typecode` to a key and it is typed into whatever has focus, the way
@@ -693,28 +828,35 @@ poll. Yes, that shipped once.
 
 **Unread is a ledger, not a window.** The latest 150 rows are enough for normal
 previews, but unread counts and oldest-unread timestamps live in a metadata-only
-per-chat ledger. Blip expands the fetch to cover new arrivals and the oldest
-outstanding unread, then rebuilds exact counts from that range. An unread cannot
-fall off the preview window or remain counted after deletion.
+per-chat ledger. The Mac's complete read-state snapshot refreshes this ledger
+without fetching message bodies. Older bridges fall back to expanding the fetch
+to cover new arrivals and outstanding unread. An unread cannot fall off the
+preview window or remain counted after deletion.
 
-**Reads reach the Mac through its menu bar.** Nothing writes `is_read` into
-`chat.db` — that would not sync to your phone. Instead *mark all read* has the
-Mac click Messages' own **Conversation ▸ Mark All as Read**, and Messages does
-the syncing. One catch, found the hard way: AppKit only validates an app's
-menus while that app is active, so with Messages in the background every item
-in that menu reports *disabled* — which used to read as "nothing unread" and
-silently did nothing. Blip now checks what Messages itself counts as unread in
-`chat.db` before and after, and when the menu is dormant it activates Messages
-for well under a second, clicks, and hands focus straight back to whatever you
-had in front.
+**Reads reach the Mac through its menu bar.** Set `push_read=thread` in
+`~/.config/blip/bridge.conf` to synchronize each direct conversation you read.
+The default `all` synchronizes only the explicit mark-all gesture; `off` keeps
+read actions local. Per-thread actions briefly select the conversation in
+Messages and restore the previous app's focus. With `push_read=thread`, a
+group read reaches the Mac through Messages' groupid link, not only mark-all.
+
+Read/unread actions are saved before contacting the Mac, verified against
+Messages' database, and retried after temporary failures or reconnects.
+Permission errors stay visible in Blip until resolved. A newer inbound beyond
+the visible `--seen` timestamp cancels an old read retry so it stays unread.
+A complete metadata-only `imsg read-state` snapshot reconciles blue dots even
+for conversations outside the recent-message window. Confirmed local overrides
+are retired, allowing later Mac/iPhone changes to take effect. Both updated
+Mac tools require the sibling `read_state.py` module.
 
 `push_read` in `bridge.conf` takes three values, and the default surprises
 people: **`all`** (the default) pushes *only* on the mark-all gesture, so
 reading one conversation in Blip clears its dot here and leaves your iPhone's
-badge alone. **`thread`** also pushes each conversation you open — DMs only,
-since a group has no `imessage://` form — at the cost of bringing Messages to
-the front on the Mac, because aiming that menu at one conversation means
-opening it. **`off`** keeps the Mac out of it entirely. `qs ipc call
+badge alone. **`thread`** also pushes each unread conversation you read, including groups.
+It briefly brings Messages forward on the Mac, then restores the previous app.
+Groups are addressed by their identifier, never their name or last speaker.
+Messages in iCloud must be enabled on your devices for Apple to propagate
+that read state; your Messages read-receipt settings still apply. **`off`** keeps the Mac out of it entirely. `qs ipc call
 nixfred.blip status` reports the live value as `read_push=`. Every push records
 its outcome in `~/.local/state/blip/push-read.log` (no message content), so
 "did that reach the Mac?" has an answer.
@@ -749,13 +891,13 @@ The 273,000-message history stays on the Mac where it lives.
 
 ## What it can't do
 
-- **Tapbacks, edits and typing indicators outbound.** Those need SIP-off code
-  injection into Messages. Not happening.
+- **Send edits or threaded replies.** Blip *displays* both and sends neither.
+  Tapbacks are the opt-in exception (above): not SIP-off code injection, but
+  Messages' own action on the bubble, through the Accessibility grant
+  `imsg-read` already uses with SIP on. It reaches 1:1 text bubbles only; a
+  group cannot be addressed yet. Typing indicators have no action at all and
+  stay out. Issue #69 has the history.
   (Showing *their* receipts on your messages works fine — that's in.)
-- **Send tapbacks, edits, or threaded replies.** AppleScript can't; Blip
-  *displays* all three. If you need to send them,
-  [BlueBubbles](https://bluebubbles.app) is the right tool and requires
-  disabling SIP.
 - **Work without a Mac, or while the Mac sleeps.** Inherent to the approach.
   The widget dims and tells you.
 

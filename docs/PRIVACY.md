@@ -12,14 +12,14 @@ inventory of what lands on disk.
 | `~/.ssh/blip_ed25519` | Blip's dedicated ssh key — confined on the Mac to the bridge tools | — |
 | `~/.config/blip/allowlist.json` | handles allowed to raise desktop toasts | message text |
 | `~/.config/blip/mutelist.json` | handles and phrases you typed, whose conversations Blip hides entirely | message text Blip received |
-| `~/.local/state/blip/state.json` (0600, atomic) | poll watermark, read marks, per-chat unread counts and oldest-unread timestamps, self-chat ids, group names/members, opaque SHA-256 toast keys | **message bodies — ever** |
+| `~/.local/state/blip/state.json` (0600, atomic) | poll watermark, read marks, per-chat unread counts and oldest-unread timestamps, pending read actions and retry status, self-chat ids, group names/members, opaque SHA-256 toast keys | **message bodies — ever** |
 | `~/.local/state/blip/audit-cache.json` (0600, parent 0700) | bounded contact-scan summaries: handles, candidate names, source labels, counts, opaque card tokens, and freshness fingerprints | message bodies, photos, full contact cards |
 | `~/.local/state/blip/window.json` | whether the app window was open, its size | anything else |
 | `~/.cache/blip/att/` (0700, files 0600, 500 MB LRU, no expiry) | attachments you viewed, plus images ≤ 5 MB and link-preview thumbnails in any conversation you *open* (they render inline, so they are fetched when the thread is). HEIC arrives converted to JPEG. File names carry the Mac's attachment row id and a sanitized name whose extension follows the MIME type | attachments in conversations you never opened |
 | `~/.cache/blip/linkpreview/` (0700, files 0600, 7-day TTL) | title, description and picture of pages linked in your messages, for links Messages did not decorate | anything from a page nobody linked you to |
 | `~/.cache/blip/avatars/` (0700, files 0600, 7-day TTL) | contact photos for people in your thread list, named by a hash of the handle; an empty `.none` marker for contacts without one | names, numbers |
 | `$XDG_RUNTIME_DIR/blip/` (tmpfs, 0700) | images pasted into the compose box; a 60s AddressBook dump (`contacts-dump.json`, names, phones, emails) for live new-message search; swept after an hour and gone at logout | message bodies |
-| `~/bin/imsg`, `~/bin/imsg-send`, `~/bin/contacts` | the bridge shim (a bash script) | — |
+| `~/bin/imsg`, `~/bin/imsg-send`, `~/bin/imsg-read`, `~/bin/imsg-react`, `~/bin/contacts`, `~/bin/contact-save` (or `bin_dir=` in `bridge.conf`) | the bridge shim (a bash script) | — |
 
 **Marking a conversation read is visible to the sender.** Blip can now tell
 Messages on the Mac that you have read something (`push_read=` in
@@ -44,24 +44,45 @@ toasts show a sender name and a preview through your notification daemon,
 gated by the allowlist — and your notification daemon may keep its own
 history. Blip itself keeps one log, `~/.local/state/blip/push-read.log` (timestamps, the `imsg-read` arguments — `--all`, or a handle when `push_read=thread` — exit codes and its status line; never message content), and nothing else; the shell's stderr (journald) sees
 recipients and exit codes, never bodies (`imsg-send` prints a byte count).
-Message bodies do pass through process arguments on both machines, visible
-to other processes running as you.
+Message bodies do not pass through bridge process arguments; they use stdin.
+The read-state snapshot contains identifiers, counts, timestamps and aliases only.
 
 Threat model and the audit findings behind these notes: [SECURITY.md](SECURITY.md).
+
+### Security-code autofill
+
+With `otp_autofill=on`, one pending code lives in Blip's private helper for at
+most five minutes. Filling, dismissing, replacing it, disabling autofill or
+exiting clears that reference. Focus changes preserve the original deadline.
+No code is added to a file, process arguments, environment, clipboard or
+notification history. The prompt shows that a code is available, not its digits.
+The original message remains in Messages and Blip's conversation model.
+
+The helper reads native accessibility labels, field types, character counts,
+field bounds and the document origin. It checks nearby inputs to recognize a
+row of digit boxes. It does not read input values or log this metadata. Codes
+and metadata cross bounded inherited pipes; no public autofill IPC is added.
+Enabling autofill enables the session accessibility bus without turning on a
+screen reader. That shared bus remains enabled when Blip stops.
 
 ## On the Mac
 
 | Path | Contains |
 |---|---|
-| `~/.blip/bin/` | the bridge tools (`imsg`, `imsg-send`, `contacts`, `tcc-check`, `blip-check`) |
+| `~/.blip/bin/` | the bridge tools (`imsg`, `imsg-send`, `imsg-read`, `imsg-react`, `contacts`, `contact-save`, `tcc-check`, `blip-check`, `blip-dispatch`) |
+| `~/.blip/contact-save.lock` | empty serialization lock; no message or contact data |
 | `~/.blip/src/` | the installer's copy of the same files |
 | `~/Pictures/.blip-outbox/<id>/` | a file you are sending, for the seconds until Messages copies it into its own store; then moved to `~/.blip/sent` (leftovers older than an hour are swept) |
 | `~/.blip/sent/<id>/` (200 MB LRU) | files Blip sent — kept because Messages often leaves the attachment record pointing at the staging path instead of copying it, and Blip would otherwise never be able to show your own photo again |
 
 The tools read `~/Library/Messages/chat.db`, the AddressBook database, and
 Messages' pinning preferences read-only, and drive Messages.app through
-AppleScript. They write nothing else. Messages.app itself keeps your
-conversation history exactly as it always has.
+AppleScript. Contact creation writes a new card through the native address
+book API. Contact drafts stay in memory and cross bounded stdin, never argv
+or persistent Linux storage. Messages.app itself keeps your
+conversation history exactly as it always has. Read and unread
+actions use `~/.blip/messages-ui.lock` to serialize access to Messages'
+selected conversation; the lock contains no message data.
 
 Contact review reads bounded names, account labels, matching-field counts,
 and opaque card tokens from Mac Contacts. Raw database identifiers stay on the
@@ -89,8 +110,10 @@ timestamp when `chat.db` changes; the client then fetches privately.
 
 ## What Blip cannot do
 
-Send tapbacks, edit or unsend, see typing indicators.
+Edit or unsend, see typing indicators.
 Those need Apple private APIs that Blip deliberately does not use.
+Tapbacks are the opt-in exception (`tapbacks=on`): they are Messages' own
+actions, performed through Accessibility, not a private API.
 
 The menubar panel saves only its preferred width and height in
 `$HOME/.local/state/blip/panel.json` (0600). No draft or conversation content

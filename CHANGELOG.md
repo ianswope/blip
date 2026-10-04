@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **Search no longer drops a reply that matches your own (#126, Greyforge
+  Labs).** In a group, your "yes" and another member's "yes" in the same
+  second came back as one hit, and a note to yourself could show as incoming
+  depending on which copy the Mac returned first. Search now uses the same
+  echo rules as the conversation view, and a note to yourself that iCloud
+  re-synced as several copies is one hit, from you.
+- **Voice messages play.** An iPhone voice message ("Audio Message.caf") arrived
+  with no MIME type in chat.db, only Apple's type code, so Blip saved it as a
+  `.bin` and refused to open it. The Mac bridge now fills a missing MIME from
+  that code, and Blip turns the CAF into Ogg Opus with ffmpeg, which the
+  default player opens. Re-run `blip-setup` so the Mac's `imsg` picks this up.
+  Audio plays with no window (mpv opened an empty black one); click the chip
+  again to stop it.
+- **Conversation menu.** Right-click is Mark as Unread or Mark as Read.
+  Read-state clicks Messages' own menu (DMs). Mark as Unread stays on direct
+  messages. A group read still reaches the Mac through
+  Messages' groupid link. Mark-all-read stays on the list, the `a` key, and
+  the bar right-click.
+- **Blue dots follow Messages' `is_read`, not only the read cursor.** Mark as
+  Unread can leave `last_read_message_timestamp` ahead of a row that is still
+  unread. The dot follows the newest inbound `is_read=0`, including a reaction.
+  The header and the bar badge count conversations, not messages.
+- **Read sync retries until the Mac agrees.** A read or unread click is saved
+  before the push and retried with backoff. `read_state.py` is the shared
+  metadata snapshot, including manual unread below Apple's cursor and merged
+  phone/email DMs. Re-run `blip-setup` so the Mac picks up `read_state.py`.
+
 - **The conversation list stopped scanning the address book.** With startup
   amortised, what was left was compute — and `chats` was spending 104 ms of
   every request resolving names, because a handle with no exact last-ten key
@@ -67,6 +94,278 @@
   N+1 with one window function is slower (70 → 107 ms; the per-chat lookups
   are indexed), and bundling the deep poll's three calls into one would be
   undone by the persistent channel coming next.
+
+## 2.6.2 — 2026-09-26 — scrolling that fits your mouse, pins that stay pinned
+
+- **A pinned group whose id changed stays in Favorites.** Messages re-keys a
+  group now and then, and its pin keeps the old iCloud group ids, which match
+  no chat row any more. The phone and the Mac still showed the pin; Blip
+  quietly dropped it. The Mac bridge now resolves pin ids through chat.db's
+  `chat_lookup` table, the same mapping Messages uses. Re-run `blip-setup` so
+  the Mac's `imsg` picks this up.
+
+- **Opt-in glide for mouse-wheel notches (#115, Guido Jouret).** With
+  `smooth_scroll=on` in `bridge.conf` a notch glides to its place over 180 ms
+  (OutCubic) instead of landing at once; a notch that arrives mid-glide moves
+  the target rather than restarting the easing, so a fast spin never loses
+  distance, and any other write to `contentY` (keys, paging, the bottom-stick,
+  a touchpad) cancels it. Touchpads are never animated. OFF by default: the
+  two earlier animated schemes collapsed under MX Master hi-res floods, and
+  this one is unproven on that mouse; `status` shows `smooth_scroll=on` while
+  it is on. The PR shipped it on by default with a shell.json switch; the
+  merge made it a bridge.conf key, off, like every other knob.
+
+- **One wheel notch scrolls one notch, not half a screen.** The conversation
+  and the thread list multiplied every wheel event by 4.5 (a standard notch,
+  angleDelta 120, moved about 540 px) and touchpad deltas by 3, on top of the
+  scroll factor the compositor had already applied. Both now apply the delta
+  as delivered, so the system scroll setting decides the speed;
+  `wheelMultiplier` / `touchpadMultiplier` on the view default to 1.0.
+  **And a knob for wheels whose one click is several notches:** an MX Master
+  4 sends four notches per click, so at 1:1 one click still moved 480 px in a
+  609 px window (measured on the raw evdev stream, 2026-09-25). `scroll_gain=`
+  and `touchpad_scroll_gain=` in `bridge.conf` (0.05–10, default 1, re-read on
+  save) multiply the wheel's and the touchpad's delta separately; `status`
+  reports the live value. `scroll-gain.ts` is the parser's tested twin.
+
+- **Turning the monitor off no longer crashes Hyprland.** With the app window
+  open, powering the only monitor off (or a monitor that drops off DisplayPort
+  when it sleeps) took the whole session down. Qt swaps the lost output for a
+  nameless 0x0 placeholder screen, Omarchy builds a bar on it, and Blip's widget
+  on that bar crowned itself leader and restored the app window. Hyprland 0.56
+  segfaults mapping a floating window with no output. Now nobody leads while
+  there is no real screen; the leader on the monitor that comes back restores
+  the window as before.
+
+## 2.6.1 — 2026-09-20
+
+- **A second monitor's bar icon works on a development shell too.** Blip's bar
+  has one copy per screen, only the first owns the panel, and the others hand
+  their clicks and hotkeys to it by running `qs -p <shell> ipc call`. That path
+  was written with the shell's stock location baked in, which is correct on a
+  normal install and wrong the moment the shell runs from a checkout (`omarchy
+  dev link`): the forward found no matching instance, exited, and the shell
+  still reported the summon as a success, so clicking the icon or pressing the
+  hotkey on any screen but the first did nothing at all and said nothing. It now
+  asks Quickshell where the running shell actually lives, which is the stock
+  path on a stock box. Affects every forward, including the double-click app
+  window, `goto`, refresh and mark-all-read, not only the popout.
+
+## 2.6.0 — 2026-09-19 — codes that fill themselves, senders you can save
+
+- **A window you move stays where you put it.** Sending the Blip window to
+  another workspace worked for about 400 ms and then it flew back. Blip watches
+  Hyprland for a deliberate move so it can save that workspace as the window's
+  home, but it compared the window's own address (`0x5b1604b31bf0`) against the
+  address in the event (`5b1604b31bf0`, no prefix) as plain text, so the two
+  never matched. Every move you made was therefore filed as a stray remap and
+  undone, and the window could never leave the workspace it first opened on.
+- **Clicking the Blip icon on a second monitor opens the popout there.** The
+  panel is owned by the bar on the first screen, and a click anywhere else was
+  forwarded to it without saying where it came from, so the popout appeared on
+  monitor one no matter which icon you clicked. The click now carries its
+  screen and the panel is re-anchored to the bar you actually used.
+- **`SUPER+CTRL+<n>` opens the Blip popout on a multi-monitor bar.** Omarchy
+  sends a panel hotkey to the widget on the focused screen, but only the
+  leader (first screen) owns a panel, so on any other screen `open()` did
+  nothing — silently, no `summon:` warning, the shell counts it as success.
+  A follower now forwards to the leader by IPC the way a click on its icon
+  does, through a new open-only verb `openon <screen>` (a hotkey that means
+  "open" must not close an open panel, which `toggleon` would), and the
+  leader re-anchors to the asked-for screen so the popout appears under the
+  focused bar instead of wherever it was last anchored. `close()` on a
+  follower forwards too.
+- **Security-code autofill fills in Zen and Firefox.** "Fill code" did nothing
+  there: Gecko's accessibility layer reports success from `set_text_contents`
+  but writes nothing, and the helper never checked, so the failure was silent.
+  It now re-reads the field, and if it is still empty types the code through the
+  same Hyprland key path Chromium already uses. A write that did land is left
+  alone, so digits are never entered twice. Checked on a live sign-in page in
+  Zen 1.22.2b.
+- **The app window opens where you are.** Blip remembers a home workspace so
+  the window goes back there after the screen idles off, but it claimed that
+  home from wherever the window happened to land, and then restored onto it
+  even when that workspace no longer existed: Hyprland created it and took you
+  there. With a workspace compactor running (empty workspaces disappear and the
+  rest are renumbered) that turned Super+M into a window that opened, flew to
+  another workspace, resized and vanished. Now only a deliberate move claims a
+  home, and a home that no longer exists is ignored rather than recreated.
+- **Save an unknown sender as a contact.** Review the sender, type a name,
+  confirm the fields, and a new card is created in Contacts on the Mac. It only
+  ever creates: there is no edit and no delete. It refuses when a matching
+  contact already exists, reads the saved card back and compares it before
+  reporting success, and needs the conversation's own handle to be the phone or
+  email you are saving. Requires Contacts access on the Mac, which it asks for
+  the first time you use it; without it the feature reports unavailable and
+  nothing is written. Re-run `blip-setup` so the Mac gets the new tool. See
+  docs/SAVE-CONTACT.md. Thanks @Kb2uka (#91).
+- **`bin_dir=` really moves every shim now.** Exact-card details and vCard
+  export still called `~/bin/contacts` directly, so with the shims moved
+  elsewhere both features failed while everything around them worked. Found by
+  @Kb2uka while rebasing #91, along with the reason our guard test missed it:
+  it matched only double-quoted paths and two of the tool names.
+- **A read push now counts the whole conversation, not one chat row.**
+  `imsg-read --chat` verified itself against a single `chat_identifier`, so
+  when Messages had split a conversation across rows — a re-keyed group keeps
+  its retired row, a merged 1:1 keeps a phone row beside an email row — an
+  unread on an alias made the count read zero. The push then printed
+  `nothing unread` and exited 0 without touching Messages, and a partly
+  cleared cluster reported success. It now scopes the count to the cluster
+  through `imsg`'s `chat_cluster_ids()`, the same rule the sidebar, pins and
+  `thread --chat` already follow. Hit `push_read=thread` hardest, where it
+  looked like a push that simply never arrived.
+
+- **Reading a group in Blip can now clear it on your phone too.** Per-thread
+  read push was DMs only, because a group's identifier has no `imessage://`
+  form. Messages accepts its own deep link instead, `imessage:open?groupid=`,
+  so with `push_read=thread` a group you read here is marked read on the Mac
+  like any DM. The bridge addresses the group by its opaque identifier and
+  never by whoever spoke last, serialises Messages selection and menu clicks
+  behind an owner-only lock so two reads cannot cross, refuses to click when
+  the URL fails or Messages has no window, and puts the app you were using
+  back in front afterwards. Default policy is still `all`. Re-run `blip-setup`
+  so the Mac picks up the new `imsg-read`. Thanks @jondkinney (#106).
+- **A source-routing seam, and nothing else changes.** Every spawn that is about
+  one conversation — loading a thread, catch-up rows, a read push, an avatar, a
+  file send and a text send — now asks `source-id.ts` which bridge answers for
+  that conversation id. Stock Blip has exactly one source, the Mac, and every id
+  resolves to the same shim in `bin_dir` with the same arguments as before, which
+  the tests pin. It exists so a fork can add a second messenger by adding one
+  entry to `EXTRA_SOURCES`; iMessage remains the only source Blip ships, tests
+  and supports (#70).
+- **`bin_dir=` in `bridge.conf`.** The Linux-side shims (`imsg`, `imsg-send`,
+  `imsg-read`, `contacts`) no longer have to live in `~/bin`. Set
+  `bin_dir=~/.local/bin` (or any plain absolute path; `~` and `$HOME` expand)
+  and `blip-setup` installs them there, and every spawn — the collector, thread,
+  search, attachments, avatars, contacts, sends and the `imsg watch` channel —
+  looks there. `BLIP_BIN_DIR` does the same for one `blip-setup` run and is
+  written back to `bridge.conf`. Unset, nothing changes: `~/bin` as before.
+- **A read dot no longer comes back while the badge says zero.** Reading a
+  conversation clears its dot immediately and remembers that for 60 seconds. If
+  that memory expired before the collector confirmed the read, the next
+  identical poll matched a stale no-op cache, so the badge updated while the
+  list kept showing the conversation as read, or the dot returned on its own.
+  The no-op check is now derived from the model actually on screen.
+  Thanks @damonjanis (#101).
+- **A read push is only reported as done when the Mac agrees it is done.**
+  `imsg-read` exited 0 when the Mac's unread count merely moved (3 to 2 counted
+  as success) and when chat.db could not be read at all, so a partial or
+  unverifiable push looked clean in `push-read.log`. It now waits out the same
+  bounded settling window for a real zero in the scope it was asked about, and
+  exits 75 with a reason otherwise. A missing menu item still succeeds when the
+  database says the conversation is read. Consequence worth knowing: a message
+  arriving during the three-second settle makes that push report failure even
+  though it cleared what it could. Nothing retries; the exit code is recorded
+  and the next mark-all clears the rest. Thanks @damonjanis (#102).
+- **One never-opened unread no longer slows every poll.** The ledger has to
+  cover every outstanding unread so a message deleted or read on another device
+  is reconciled, but that boundary was collapsed into one global minimum and
+  handed to the preview window, so a single dot nobody ever opened set the fetch
+  depth for every poll: 150 rows doubling to 8192 across that many sequential
+  ssh calls, for as long as it sat there. A 45-day-old dot cost 6 bridge calls,
+  4798 rows and 3.18 s against a 6 s timer. The window now stops at the
+  watermark and each conversation the window missed gets one bounded fetch of
+  its own, oldest first, four per poll. A conversation the fetch cannot verify
+  keeps the count it had, so a real dot is never dropped. Measured here with a
+  six-week-old dot: 1.8 s to 0.63 s per poll, same unread count.
+  Thanks @ianswope (#98).
+- **A blue 1:1 is not turned green by Blip's own last send.** `mergeChats`
+  used to overwrite the window's send service with the chat-list row, which
+  is the cluster's newest bubble — including ours. One green send then made
+  every later send green, even when every inbound row was iMessage. The list
+  may still move a DM onto iMessage; it may not move one off. Thanks
+  @ianswope (#97).
+- **`prefer_imessage=on` keeps mixed 1:1s on iMessage.** Separate from the
+  list overwrite: last-inbound RCS/SMS in a DM that already had iMessage
+  still made the next send green. Opt in with `prefer_imessage=on` in
+  `bridge.conf`. A successful iMessage anywhere in the loaded window wins, a
+  never-iMessage green thread stays green, and a failed iMessage to a phone
+  still flips to SMS. Off by default. Groups still send by chat id.
+- **A Send Later message shows as Scheduled, not sent.** Messages writes a
+  scheduled message into chat.db the moment you queue it, dated at the time it
+  will go out. Blip showed it as already sent, made it the conversation's
+  newest message (a thread jumped to the top of the list with tomorrow's
+  date), and opening that thread would have set its read mark a day ahead,
+  hiding every reply until then. The bridge now flags a waiting Send Later
+  (`schedule_type` 2, `schedule_state` 2), the bubble reads "Scheduled for
+  Sep 17 2:00 PM" in your own time zone, and it never counts as the newest
+  message or moves a watermark or read mark. Once it sends, it is an ordinary
+  message. Found on macOS 27; Send Later itself dates from macOS 15, so older
+  Macs had it too. Re-run `blip-setup` so the Mac picks up the new `imsg`.
+
+- **Fill a security code beside the field.** `otp_autofill=on` offers incoming
+  codes through a Blip prompt using native Linux accessibility, including
+  separate digit boxes. The prompt shares Blip's fonts and colors, falls back
+  to the top right when field bounds are unavailable, and expires after five
+  minutes. No browser extension or clipboard is needed.
+- **Right-click a message to quote it.** Replying to something further up the
+  conversation used to be hidden behind Shift+Page Up, then Ctrl+R. Right-click
+  on a message now offers Quote and reply and Copy message; right-click on a
+  link or its preview offers Open in browser, Copy link and Share link. Quoting
+  puts the quote above whatever you had already typed and never sends. It is a
+  plain "> quote", not an Apple inline reply thread. Right-click on text no
+  longer copies instantly; Copy message is one item away. Thanks @jefehoser (#94).
+- **Super+M no longer closes the wrong window.** The shortcut picked the first
+  window whose title merely started with "Blip", so a focused browser tab or
+  editor called "Blip documentation" got closed instead of Blip opening. It now
+  matches only the real app, the way the window already identifies itself.
+  If you copied the Super+M binding from the README, replace it with the
+  updated example; updating the plugin does not change your Hyprland config.
+  Thanks @jefehoser (#93).
+- **Waking the laptop no longer replays the night's messages as toasts.** Nothing
+  polls while the machine sleeps, so the watermark stood still and every
+  allowlisted message that arrived meanwhile toasted on wake, one
+  `notify-send` at a time, up to twenty, even ones already read on the iPhone.
+  The badge already ignored those (`isUnread` honours Apple's read flag);
+  `selectToasts` now does too. A bridge too old to report `read` toasts as
+  before. Reported by @mwhuss (#89), fixed by @ianswope (#95).
+- **The app window stays on its workspace after idle.** Walking away used to
+  remap Blip onto whichever workspace was on screen. A user move is still the
+  new home; a screensaver or display-off remap is sent back quietly.
+- **GIFs move.** An animated GIF arrived as a still, and did so twice over. The
+  inline-preview path asks the Mac to resample every image with sips, which
+  flattens an animation to a single frame — a 1.4 MB GIF reached Linux as a
+  198 KB JPEG, the motion gone before the panel ever saw it. Animated formats
+  now skip that path and cross as their own bytes, into the same cache slot a
+  click uses. And a QML `Image` paints one frame whatever you hand it, so
+  animated attachments render through `AnimatedImage` instead; stills stay on
+  `Image`, which is what applies `autoTransform` (the EXIF fall-back for
+  anything cached before orientation was baked in at fetch time). Only the
+  active renderer loads, so no photo decodes twice, and the decode is still
+  bounded in both axes. GIF dimensions now come off the header too — they read
+  0×0 before, leaving the bubble nothing to size itself from.
+- **A message can carry several files.** Dropping five photos on a
+  conversation attached one and threw the other four away without a word: the
+  drop handler read `urls[0]` and the draft was a single path. Drafts are a
+  list now — drag-and-drop takes every file, `/attach` and Ctrl+V add to it,
+  and each chip has its own ✕. They ship one part per file in the order you
+  queued them, with the caption on the first only (repeating it would post the
+  same sentence five times), and the service is captured when the batch starts
+  so switching threads mid-send cannot push a later part onto a different one.
+  A part that fails stops the batch and leaves the rest attached, saying how
+  many, rather than making you work out which of five went out. Capped at ten
+  files, because a stray drop of a folder should be refused and not become
+  eighty sends. Chips are one per row, like the received ones — a row of N
+  sums its implicit widths and drags the whole column off the panel.
+
+- **Time crosses the bridge as UTC.** Stamps used to arrive as the Mac's naive
+  wall clock ("2026-09-07 14:33:12") and were compared against the Linux
+  clock — the same string only while both machines sat in one timezone. A Mac
+  an hour ahead put every read mark ahead of every message, so nothing ever
+  counted as unread; an hour behind and the backlog re-toasted. And once a
+  year, in the DST fall-back hour, the Mac's own clock repeated itself: two
+  messages an hour apart carried the SAME stamp, so ordering, the watermark
+  and "newer than the mark" all quietly stopped meaning anything for that
+  hour. The bridge now emits ISO-8601 UTC (`2026-09-07T18:33:12Z`), which is
+  monotonic and whose lexical order is chronological order — the property
+  every ledger, sort and watermark in Blip was already assuming. Local time
+  became a display concern: bubbles, day dividers, "Today"/"Yesterday" and
+  read receipts are rendered in the READER's zone, so a day still breaks at
+  your midnight and not at Greenwich's. `imsg`'s own plain-text output keeps
+  the Mac's clock — a person reading `imsg recent` wants the time they
+  remember. Upgrading migrates the marks in `state.json`, and stamps from a
+  Mac still on the old bridge are normalised as they come in, so a
+  half-upgraded pair keeps working instead of silently going quiet.
 
 ## 2.5.0 — 2026-09-13 — photos at once, and sends that stay put
 

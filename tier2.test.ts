@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { CACHE_DIR, bakeOrientation, cacheFileName, exifOrientation, fetchAttachment, imageMetrics, isImageMime, jpegtranArgs, lruEvictions, sanitizeName, wantsJpeg } from "./fetch";
+import { CACHE_DIR, bakeOrientation, cacheFileName, rewrapCaf, exifOrientation, fetchAttachment, imageMetrics, isAnimatedMime, isImageMime, jpegtranArgs, lruEvictions, sanitizeName, wantsJpeg } from "./fetch";
 import { extFor, existingLocalFile, firstFileUri, localFileFromPayload, pickFileType, pickImageType, snapshotClipboard } from "./paste";
 import { resolveTarget, sendFile } from "./send-file";
 import { linkHost, linkify, normalizeLink, selectThread } from "./thread";
@@ -15,7 +15,7 @@ import {
   sniffImage,
 } from "./linkpreview";
 import { AVATAR_DIR, AVATAR_NONE_TTL_MS, AVATAR_RETRY_MS, AVATAR_TTL_MS, avatarArgs, avatarKey, fetchAvatar, fetchAvatarBatch } from "./avatar";
-import { readFileSync, writeFileSync, unlinkSync, utimesSync, mkdtempSync, mkdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, unlinkSync, utimesSync, mkdtempSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -311,9 +311,9 @@ describe("search shaping", () => {
 
   test("attachment-only rows (placeholder char) are dropped", () => {
     const rows = [
-      { ts: "2026-08-31 10:00:00", from_me: false, handle: "+15551234567", name: "A",
+      { ts: "2026-08-31T10:00:00Z", from_me: false, handle: "+15551234567", name: "A",
         service: "iMessage", chat: "+15551234567", text: "￼" },
-      { ts: "2026-08-31 10:01:00", from_me: true, handle: "+15551234567", name: "A",
+      { ts: "2026-08-31T10:01:00Z", from_me: true, handle: "+15551234567", name: "A",
         service: "iMessage", chat: "+15551234567", text: "real match" },
     ] as never[];
     const out = shapeResults(rows, "match", 10);
@@ -324,7 +324,7 @@ describe("search shaping", () => {
 
   test("group hits are flagged and limit respected", () => {
     const rows = Array.from({ length: 5 }, (_, i) => ({
-      ts: `2026-08-31 10:0${i}:00`, from_me: false, handle: "+15551234567", name: "G",
+      ts: `2026-08-31T10:0${i}:00Z`, from_me: false, handle: "+15551234567", name: "G",
       service: "iMessage", chat: "abcdef0123456789abcdef0123456789", text: `hit ${i}`,
     })) as never[];
     const out = shapeResults(rows, "hit", 3);
@@ -338,9 +338,9 @@ describe("search shaping", () => {
       messageMatchScore("cat", "A scatter of leaves."),
     );
     const rows = [
-      { ts: "2026-08-28 17:29:00", from_me: false, handle: "+15550001111", name: "Alice",
+      { ts: "2026-08-28T17:29:00Z", from_me: false, handle: "+15550001111", name: "Alice",
         service: "iMessage", chat: "group-a", text: "A scatter of leaves." },
-      { ts: "2026-05-18 16:34:00", from_me: true, handle: "+15550002222", name: "Bob",
+      { ts: "2026-05-18T16:34:00Z", from_me: true, handle: "+15550002222", name: "Bob",
         service: "iMessage", chat: "+15550002222", text: "The cat sat down." },
     ] as never[];
     const out = shape(rows, "cat", 10);
@@ -351,23 +351,23 @@ describe("search shaping", () => {
   test("query case does not change whole-word recency order", () => {
     const { shapeResults: shape } = require("./search") as typeof import("./search");
     const rows = [
-      { ts: "2026-05-25 22:20:00", from_me: false, handle: "+15550001111", name: "Alice",
+      { ts: "2026-05-25T22:20:00Z", from_me: false, handle: "+15550001111", name: "Alice",
         service: "iMessage", chat: "group-a", text: "Alice thanks Bob." },
-      { ts: "2026-08-25 20:45:00", from_me: false, handle: "+15550002222", name: "Bob",
+      { ts: "2026-08-25T20:45:00Z", from_me: false, handle: "+15550002222", name: "Bob",
         service: "iMessage", chat: "+15550002222", text: "Thanks" },
     ] as never[];
     const lower = shape(rows, "thanks", 10).map((h) => h.ts);
     const titled = shape(rows, "Thanks", 10).map((h) => h.ts);
     expect(lower).toEqual(titled);
-    expect(lower[0]).toBe("2026-08-25 20:45:00");
+    expect(lower[0]).toBe("2026-08-25T20:45:00Z");
   });
 
   test("same match quality ties break on message time, not thread order", () => {
     const { shapeResults: shape } = require("./search") as typeof import("./search");
     const rows = [
-      { ts: "2025-07-15 17:24:00", from_me: false, handle: "+15550001111", name: "Alice",
+      { ts: "2025-07-15T17:24:00Z", from_me: false, handle: "+15550001111", name: "Alice",
         service: "iMessage", chat: "quiet-old-thread", text: "Thanks everyone." },
-      { ts: "2026-05-25 22:20:00", from_me: false, handle: "+15550002222", name: "Bob",
+      { ts: "2026-05-25T22:20:00Z", from_me: false, handle: "+15550002222", name: "Bob",
         service: "iMessage", chat: "busy-new-thread", text: "Alice thanks Bob." },
     ] as never[];
     const out = shape(rows, "thanks", 10);
@@ -402,7 +402,7 @@ describe("search shaping", () => {
     const runner = () => ({
       status: 0,
       stdout: JSON.stringify([{
-        ts: "2026-05-01 10:00:00", from_me: false, handle: "+15550002222", name: "Bob",
+        ts: "2026-05-01T10:00:00Z", from_me: false, handle: "+15550002222", name: "Bob",
         service: "iMessage", chat: "+15550002222", text: "the car is red",
       }]),
       stderr: "",
@@ -425,7 +425,7 @@ describe("search shaping", () => {
     }];
     const msgs = [{
       chat: "+2", name: "Bob", handle: "+2", service: "iMessage",
-      ts: "2026-09-02 10:00:00", from_me: true, text: "ann called", group: false,
+      ts: "2026-09-02T10:00:00Z", from_me: true, text: "ann called", group: false,
     }];
     const out = mergeSearchResults(people, msgs);
     expect(out.map((h) => h.name)).toEqual(["Ann", "Bob"]);
@@ -686,8 +686,8 @@ describe("war-room hardening (2.1)", () => {
     expect(sanitizeName("写真.png")).toBe("写真.png");
   });
   test("a DM thread never admits the same person's GROUP messages", () => {
-    const dm = { ts: "2026-08-30 12:00:00", from_me: false, handle: "+15551234567", name: "A", service: "iMessage", chat: "+15551234567", text: "dm" } as never;
-    const grp = { ts: "2026-08-30 12:01:00", from_me: false, handle: "+15551234567", name: "A", service: "iMessage", chat: "abcdef0123456789abcdef0123456789", text: "in group" } as never;
+    const dm = { ts: "2026-08-30T12:00:00Z", from_me: false, handle: "+15551234567", name: "A", service: "iMessage", chat: "+15551234567", text: "dm" } as never;
+    const grp = { ts: "2026-08-30T12:01:00Z", from_me: false, handle: "+15551234567", name: "A", service: "iMessage", chat: "abcdef0123456789abcdef0123456789", text: "in group" } as never;
     const out = selectThread([dm, grp], "+15551234567", false, 50);
     expect(out.map((m: { text: string }) => m.text)).toEqual(["dm"]);
   });
@@ -850,8 +850,8 @@ describe("the contact graph never rides argv", () => {
   });
 
   test("a bad or absent map degrades ranking, never the search", () => {
-    expect(parseRecency('{"+15550100011":"2026-09-03 09:00:00"}'))
-      .toEqual({ "+15550100011": "2026-09-03 09:00:00" });
+    expect(parseRecency('{"+15550100011":"2026-09-03T09:00:00Z"}'))
+      .toEqual({ "+15550100011": "2026-09-03T09:00:00Z" });
     expect(parseRecency("not json")).toEqual({});
     expect(parseRecency("[1,2,3]")).toEqual({});
     expect(parseRecency("null")).toEqual({});
@@ -914,6 +914,67 @@ describe("multi-photo messages and the preview transform (#Crystal/Thatchers)", 
   });
 });
 
+describe("animated images have to keep moving", () => {
+  /** "GIF89a", then the logical screen size as u16 little-endian. */
+  const gifHeader = (w: number, h: number) => {
+    const b = Buffer.alloc(13);
+    b.write("GIF89a", 0, "ascii");
+    b.writeUInt16LE(w, 6);
+    b.writeUInt16LE(h, 8);
+    return b;
+  };
+
+  test("only the formats that actually animate count", () => {
+    expect(isAnimatedMime("image/gif")).toBe(true);
+    expect(isAnimatedMime("IMAGE/GIF")).toBe(true);          // mimes arrive in any case
+    expect(isAnimatedMime("image/png")).toBe(false);
+    expect(isAnimatedMime("image/heic")).toBe(false);
+    expect(isAnimatedMime("")).toBe(false);
+  });
+
+  test("a GIF auto-fetch is NEVER resampled — sips would flatten it to one frame", () => {
+    const seen: string[][] = [];
+    const runner = ((_c: string, args: string[]) => {
+      seen.push(args);
+      return { status: 0, stdout: gifHeader(498, 372), stderr: "" };
+    }) as never;
+    // The same cap that makes every other image take the resampling path.
+    fetchAttachment("881", "loop.gif", "image/gif", runner, 5 * 1024 * 1024);
+    expect(seen[0]).not.toContain("--max-dim");
+    expect(seen[0]).not.toContain("--jpeg");
+    // …while a still image on that same path still is resampled.
+    fetchAttachment("882", "shot.png", "image/png", runner, 5 * 1024 * 1024);
+    expect(seen[1]).toContain("--max-dim");
+    for (const f of ["881-orig-loop.gif", "882-prev-shot.jpg"]) {
+      try { unlinkSync(`${CACHE_DIR}/${f}`); } catch { /* fine */ }
+    }
+  });
+
+  test("it keeps its own extension and the shared orig slot", () => {
+    // Not "-prev-…jpg": that name is a promise the bytes are a JPEG, and
+    // xdg-open dispatches on the extension.
+    expect(cacheFileName("7", "loop.gif", "image/gif", false)).toBe("7-orig-loop.gif");
+  });
+
+  test("dimensions come from the GIF header, so the bubble can size itself", () => {
+    // 0×0 left the delegate with nothing to compute a height from.
+    expect(imageMetrics(gifHeader(498, 372), "image/gif"))
+      .toEqual({ pixelWidth: 498, pixelHeight: 372, pixelRatio: 1 });
+  });
+
+  test("the panel draws animated mimes with AnimatedImage and stills with Image", () => {
+    const panelSrc = readFileSync(new URL("./BlipView.qml", import.meta.url), "utf8");
+    expect(panelSrc).toContain("AnimatedImage {");
+    expect(panelSrc).toContain("root.isAnimatedMime(chipRow.modelData.mime)");
+    // The still path keeps autoTransform: it is the EXIF fall-back for
+    // anything cached before fetch.ts began baking orientation in.
+    expect(panelSrc).toContain("autoTransform: true");
+    // Only the active renderer loads, or every photo decodes twice.
+    expect(panelSrc).toContain("chipRow.showImage && !attImage.animated ? chipRow.fileUrl : \"\"");
+    expect(panelSrc).toContain("chipRow.showImage && attImage.animated ? chipRow.fileUrl : \"\"");
+  });
+});
+
 describe("cache file names (Astra B#1)", () => {
   const { cacheFileName } = require("./fetch") as typeof import("./fetch");
   test("an unmapped MIME never keeps the sender's extension", () => {
@@ -923,6 +984,48 @@ describe("cache file names (Astra B#1)", () => {
   test("a mapped MIME still gets its own extension", () => {
     expect(cacheFileName("8", "photo.heic", "image/heic")).toBe("8-jpg-photo.jpg");
     expect(cacheFileName("9", "doc.pdf", "application/pdf")).toBe("9-orig-doc.pdf");
+  });
+});
+
+describe("voice messages (CAF) open on Linux", () => {
+  test("an audio/x-caf attachment caches as .ogg, never under the sender's name", () => {
+    expect(cacheFileName("12753", "Audio Message.caf", "audio/x-caf")).toBe("12753-orig-Audio_Message.ogg");
+    // an empty MIME still gets no opener: the bridge must supply one from the UTI
+    expect(cacheFileName("12753", "Audio Message.caf", "")).toBe("12753-orig-Audio_Message.bin");
+  });
+
+  test("rewrapCaf re-encodes from a private temp file, removes it, and keeps the original on failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "blip-caf-stub-"));
+    const caf = Buffer.from("caff\u0000\u0001fakeopus");
+    const ogg = Buffer.from("OggS\u0000rest");
+    let seen: string[] = [];
+    const ok = rewrapCaf(caf, ((cmd: string, args: string[]) => {
+      seen = [cmd, ...args];
+      const input = args[args.indexOf("-i") + 1];
+      expect(readFileSync(input)).toEqual(caf); // the temp file holds the bytes
+      return { status: 0, stdout: ogg };
+    }) as never, dir);
+    expect(ok).toBe(ogg);
+    expect(seen).toContain("libopus");
+    expect(readdirSync(dir)).toEqual([]); // temp file removed
+
+    expect(rewrapCaf(caf, (() => { throw new Error("no ffmpeg"); }) as never, dir)).toBe(caf);
+    expect(rewrapCaf(caf, (() => ({ status: 1, stdout: Buffer.alloc(0) })) as never, dir)).toBe(caf);
+    // a zero exit that is not an Ogg stream is not trusted
+    expect(rewrapCaf(caf, (() => ({ status: 0, stdout: Buffer.from("junkjunk") })) as never, dir)).toBe(caf);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("a real CAF voice message plays as Ogg Opus through ffmpeg", () => {
+    const has = spawnSync("ffmpeg", ["-version"]).status === 0;
+    if (!has) return;
+    const dir = mkdtempSync(join(tmpdir(), "blip-caf-"));
+    const src = join(dir, "v.caf");
+    const mk = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+      "-c:a", "libopus", "-f", "caf", src]);
+    if (mk.status !== 0) return; // this ffmpeg cannot write CAF+Opus; the stub test above still covers the logic
+    const out = rewrapCaf(readFileSync(src), undefined, dir);
+    expect(out.subarray(0, 4).toString("latin1")).toBe("OggS");
   });
 });
 

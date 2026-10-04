@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { parseUiFontSize, scaleFontPx } from "./ui-font";
+import { parseScrollGain, parseSmoothScroll, parseTouchpadScrollGain } from "./scroll-gain";
 
 // The renderer moved from Panel.qml into BlipView.qml in 1.8.0 (shared with the app window).
 const panel = readFileSync(new URL("./BlipView.qml", import.meta.url), "utf8");
@@ -27,6 +28,24 @@ describe("QML safety invariants", () => {
   // exclude <>"'), and 45 of the 46 annotated sinks already say PlainText.
   // This keeps the sink safe by construction rather than by the filter staying
   // correct, and makes the house rule checkable instead of aspirational.
+  // BlipView mirrors collector.isGroupChat() by hand ("Same rule as ...").
+  // Four copies of one rule drifted apart once already: widening only the TS
+  // side would make a short code a DM in the collector and a group in the
+  // panel, i.e. read-only with no way to reply. Pin the shape, both files.
+  test("the QML phone-shape rule matches the collector's", () => {
+    const collector = readFileSync(new URL("./collector.ts", import.meta.url), "utf8");
+    const shapes = (src: string) =>
+      // NOTE the open form: {5,} must be SEEN and compared, not skipped as a
+      // non-match, or reverting one site to it reads as "no rule here".
+      [...src.matchAll(/\/\^\\\+\?\[0-9\]\{(\d+),(\d*)\}\$\//g)].map((m) => `${m[1]},${m[2]}`);
+    const inCollector = shapes(collector);
+    const inPanel = shapes(panel);
+    expect(inCollector.length).toBeGreaterThan(0);
+    expect(inPanel.length).toBeGreaterThan(0);
+    expect(new Set([...inCollector, ...inPanel]).size).toBe(1);   // one bound everywhere
+    expect(inCollector[0]).toBe("3,15");                          // E.164: 15 digits max
+  });
+
   test("every Text/TextEdit declares a textFormat", () => {
     const offenders: string[] = [];
     for (const file of readdirSync(new URL(".", import.meta.url)).filter((f) => f.endsWith(".qml"))) {
@@ -117,7 +136,7 @@ describe("QML safety invariants", () => {
     expect(panel).toContain("root.failPending(completedChat, completedId, reason, completedText, completedStamp)");
     expect(panel).toContain('modelData.pending === true ? "Sending…"');
     // the read watermark never takes a pending bubble's local-clock stamp
-    expect(panel).toContain("if (list[k].pending === true) continue");
+    expect(panel).toContain("if (list[k].pending === true || list[k].scheduled === true) continue");
   });
 
   test("message text leaves this machine on stdin, never in argv (audit #4)", () => {
@@ -169,7 +188,7 @@ describe("QML safety invariants", () => {
     expect(panel).toContain("readonly property var avatarFiles: hostWidget ? hostWidget.avatarCache : localAvatarFiles");
     expect(panel).not.toContain("root.avatarFiles = m");
     expect(panel).toContain("function retryBareAvatars()");
-    expect(panel).toContain("onSurfaceOpenChanged: if (surfaceOpen) root.retryBareAvatars()");
+    expect(panel).toContain("if (surfaceOpen) root.retryBareAvatars()");
   });
 
   test("ui_font_size scales Blip text without touching Omarchy", () => {
@@ -188,12 +207,12 @@ describe("QML safety invariants", () => {
     expect(scaleFontPx(10, 14, 11)).toBe(13);
   });
 
-  test("share sheet: right-click a link, URL on stdin, never argv", () => {
+  test("message menu retains share sheet: URL on stdin, never argv", () => {
     expect(panel).toContain("function openShare(u, auto)");
     expect(panel).toContain("qrProc.write(u)");
     expect(panel).toContain("sendShareProc.write(u)");
     expect(panel).toContain('localsend --headless send "$2"');
-    expect(panel).toContain('onTapped: root.openShare(String(linkCard.link.url || ""))');
+    expect(panel).toContain('onTapped: root.openMessageMenu(modelData, String(linkCard.link.url || ""))');
     expect(panel).toContain('if (shareUrl !== "") { closeShare(); return true }');
     expect(widget).toContain('function share(url: string): string { if (!root.automationOn) return root.automationOff;');
     // never the URL as an argv element of qrencode / localsend
@@ -270,6 +289,17 @@ describe("QML safety invariants", () => {
     expect(nav).toContain("Qt.ShiftModifier");
   });
 
+  test("mark as unread is a list action, not a compose jump that eats the letter u", () => {
+    expect(panel).toContain('text: "Review contact"');
+    expect(panel).toContain('text: "Mark as Unread"');
+    expect(qmlFunction("markUnread")).toContain("hostWidget.markThreadUnread");
+    expect(widget).toContain("function markThreadUnread");
+    expect(widget).toContain('--mark-unread');
+    const fn = handleTextKeySource();
+    expect(fn).toContain('text === "u"');
+    expect(fn.indexOf('text === "u"')).toBeLessThan(fn.indexOf("inThread"));
+  });
+
   test("handleTextKey runs slash, n, and 1-9 before the inThread return", () => {
     const fn = handleTextKeySource();
     expect(fn.indexOf('text === "/"')).toBeLessThan(fn.indexOf("inThread"));
@@ -289,7 +319,9 @@ describe("QML safety invariants", () => {
     expect(panel).toContain("openThread(threads[i])");
     const catcher = panel.slice(panel.indexOf("function catchNavText"), panel.indexOf("function catchEscape"));
     expect(catcher).toContain('text >= "1" && text <= "9"');
-    expect(catcher).toContain("root.draftPath");
+    // A queued attachment still blocks the 1-9 jump: with a draft armed the
+    // keystroke belongs to the caption, not to thread navigation.
+    expect(catcher).toContain("root.attachCount > 0");
     expect(catcher).toContain("return handleTextKey(text) === true");
     const fn = handleTextKeySource();
     expect(fn).toContain("if (searching || newMode) return false");
@@ -380,6 +412,90 @@ describe("QML safety invariants", () => {
     expect(widget).toContain("function close() {");
   });
 
+  test("a follower forwards to the shell that is actually running", () => {
+    // `qs -p` matches a running instance by its CONFIG PATH, so the literal
+    // /usr/share/omarchy/shell is right only on a stock install. Under
+    // `omarchy dev link` the shell runs from a checkout and every forward exits
+    // 255 with "No running instances" — silently, because the shell's own
+    // summon still reports ok. Quickshell.shellDir is the running shell's own
+    // directory, and equals the stock path on a stock box.
+    expect(widget).toContain("readonly property string shellRoot: String(Quickshell.shellDir)");
+    expect(widget).not.toContain('"-p", "/usr/share/omarchy/shell"');
+    // Every forward uses it, none re-hardcodes the path.
+    const forwards = widget.match(/"qs", "-p", [^,]+,/g) ?? [];
+    expect(forwards.length).toBeGreaterThan(0);
+    for (const f of forwards) expect(f).toContain("root.shellRoot");
+  });
+
+  test("a panel hotkey on a follower screen reaches the leader's panel", () => {
+    // The shell hands the hotkey to the widget on the FOCUSED screen; only the
+    // leader owns a panel. A no-op open() on a follower is silent (the shell
+    // still reports success), so open() must route through openOn(), which
+    // forwards to the leader by an open-only verb — toggleon would close an
+    // already-open panel — and re-anchors to the asked-for screen.
+    expect(widget).toContain("function open() { root.openOn(");
+    const openOn = widget.slice(widget.indexOf("function openOn("));
+    const body = openOn.slice(0, openOn.indexOf("\n  }") + 4);
+    expect(body).toContain("if (!root.leader)");
+    expect(body).toContain('"openon", screenName');
+    expect(body).toContain("root.anchorPanel(p, screenName)");
+    expect(body).toContain("p.open()");
+    expect(body).not.toContain("p.toggle()");
+    expect(widget).toContain("function openon(screen: string): void { root.openOn(screen) }");
+    // close() on a follower forwards too instead of doing nothing.
+    const close = widget.slice(widget.indexOf("function close() {"));
+    expect(close.slice(0, close.indexOf("\n  }") + 4)).toContain('"ipc", "call", root.moduleName, "close"');
+  });
+
+  test("wheel and touchpad deltas apply 1:1, leaving speed to the system setting", () => {
+    // angleDelta * 4.5 made one notch ~540 px and multiplied the compositor's
+    // own scroll factor; both scroll bodies use the view's gains, default 1.0.
+    expect(panel).toContain("property real wheelMultiplier: (hostWidget && hostWidget.scrollGain > 0) ? hostWidget.scrollGain : 1.0");
+    expect(panel).toContain("property real touchpadMultiplier: (hostWidget && hostWidget.touchpadScrollGain > 0) ? hostWidget.touchpadScrollGain : 1.0");
+    const d = "var d = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y * root.touchpadMultiplier : wheel.angleDelta.y * root.wheelMultiplier";
+    expect(panel.split(d).length - 1).toBe(2);
+    expect(panel).not.toContain("wheel.angleDelta.y * 4.5");
+    expect(panel).not.toContain("wheel.pixelDelta.y * 3.0");
+  });
+
+  test("scroll_gain / touchpad_scroll_gain in bridge.conf lower the wheel gain, default 1", () => {
+    // One click of an MX Master 4 is four notches: 480 px per click at 1:1 in
+    // a 609 px window (measured 2026-09-25). The key lives in bridge.conf
+    // like every other knob, is re-read on save, and reads as 1 when absent.
+    expect(widget).toContain("property real scrollGain: 1.0");
+    expect(widget).toContain("property real touchpadScrollGain: 1.0");
+    expect(widget).toContain("root.scrollGain = root.parseGain(t, /^\\s*scroll_gain\\s*=\\s*['\"]?(\\d*\\.?\\d+)/mi)");
+    expect(widget).toContain("root.touchpadScrollGain = root.parseGain(t, /^\\s*touchpad_scroll_gain\\s*=\\s*['\"]?(\\d*\\.?\\d+)/mi)");
+    expect(widget).toContain("root.scrollGain = 1.0; root.touchpadScrollGain = 1.0;");
+    expect(widget).toContain('+ " scroll_gain=" + root.scrollGain');
+    expect(parseScrollGain("")).toBe(1);
+    expect(parseScrollGain("host=mac\n")).toBe(1);
+    expect(parseScrollGain("scroll_gain=0.25\n")).toBe(0.25);
+    expect(parseScrollGain("  scroll_gain = '0.5'\n")).toBe(0.5);
+    expect(parseScrollGain("scroll_gain=.5")).toBe(0.5);
+    expect(parseScrollGain("scroll_gain=0")).toBe(1);
+    expect(parseScrollGain("scroll_gain=abc")).toBe(1);
+    expect(parseScrollGain("scroll_gain=0.001")).toBe(0.05);
+    expect(parseScrollGain("scroll_gain=99")).toBe(10);
+    // The wheel key never reads the touchpad key, and vice versa.
+    expect(parseScrollGain("touchpad_scroll_gain=0.5")).toBe(1);
+    expect(parseTouchpadScrollGain("scroll_gain=0.25")).toBe(1);
+    expect(parseTouchpadScrollGain("scroll_gain=0.25\ntouchpad_scroll_gain=0.5")).toBe(0.5);
+  });
+
+  test("a voice message plays without a window, and the chip toggles it", () => {
+    // xdg-open gave audio to mpv, which opened an empty black video window.
+    expect(panel).toContain('if (String(root.fetchJobMime || "").indexOf("audio/") === 0) {');
+    expect(panel).toContain("root.toggleAudio(String(d.path || \"\"))");
+    expect(panel).toContain("exec mpv --no-video --force-window=no --no-terminal --really-quiet -- \"$1\"");
+    expect(panel).toContain('"sh", path]'); // the path is an argument, never interpolated
+    expect(panel).toContain("var same = audioPlayer.running && root.playingAudio === path");
+    // clicking away stops it: surface closed, another thread, view destroyed
+    expect(panel).toContain("if (!surfaceOpen) root.stopAudio()");
+    expect(panel).toContain("root.stopAudio() // another conversation");
+    expect(panel).toContain("Component.onDestruction: root.stopAudio()");
+  });
+
   test("keys and wheel scroll the conversation through one stick-aware helper", () => {
     // Two writers of flick.contentY would drift on the bottom-stick, which
     // gates the deferred push reload; the wheel handler must go through it.
@@ -400,9 +516,12 @@ describe("QML safety invariants", () => {
   });
 
   test("draft navigation keeps normal caret movement and clears history selection", () => {
-    // The selection is a target for actions; it must never outlive the rows
-    // it indexes (a reload renumbers them) and Esc must drop it before leaving.
-    expect(panel).toContain("onBubblesChanged: clearBubbleCursor()");
+    // The selection is a target for actions; its index must never outlive the
+    // rows it indexes (a reload renumbers them) and Esc must drop it before
+    // leaving. A reload clears it and finds the same bubble again by guid only.
+    const reload = panel.slice(panel.indexOf("onBubblesChanged: {"), panel.indexOf("property bool pinToBottom"));
+    expect(reload).toContain("clearBubbleCursor()");
+    expect(qmlFunction("restoreBubbleCursor")).toContain("MessageActions.bubbleIndexByGuid(bubbles, guid)");
     // the band and the list rows take the theme's hover-cursor colour/alpha through
     // one property, like Omarchy's own rows; its default is never copied by hand
     expect(panel).toContain("readonly property color hoverFill: Style.hoverFillFor(foreground, accent)");
@@ -413,15 +532,19 @@ describe("QML safety invariants", () => {
     expect(move).toContain("bubbleCursor = n - 1");            // Up from nothing = newest
     expect(move).toContain("leaveBubbles()");                  // Down past newest = same exit as Esc
     expect(qmlFunction("leaveBubbles")).toContain("scrollConversation(flick.contentHeight)");
-    expect(panel).toContain("event.key === Qt.Key_Home || event.key === Qt.Key_End");
-    expect(panel).toContain("root.clearBubbleCursor()\n                    event.accepted = composeField.moveAtBoundary(event.key, event.modifiers)");
+    // Up/Down/Home/End move the caret and leave the selected bubble alone
+    const caretKeys = panel.slice(panel.indexOf("event.key === Qt.Key_Home || event.key === Qt.Key_End"), panel.indexOf("composeField.moveAtBoundary(event.key, event.modifiers)"));
+    expect(caretKeys).toContain("event.key === Qt.Key_Home");
+    expect(caretKeys).not.toContain("clearBubbleCursor");
     expect(panel).not.toContain("var onFirstLine");
   });
 
   test("bubble actions reuse the click handlers and never steal a real send", () => {
     // Enter/Ctrl+C/Ctrl+R act on the selection only with an empty field and
     // no queued file — a queued file's Enter is a send, and must stay one.
-    expect(panel).toContain('var b = empty && root.draftPath === "" ? root.selectedBubble() : null');
+    // draftPath became attachCount when a message learned to carry SEVERAL
+    // files; the guard is the same one — no queued attachment.
+    expect(panel).toContain('var b = empty && root.attachCount === 0 ? root.selectedBubble() : null');
     const open = qmlFunction("openBubble");
     expect(open).toContain("openAttachment(b.attachments[0])");
     expect(open).toContain("openShare(urls, false)");   // a link goes to the sheet, never straight to the browser
@@ -441,7 +564,8 @@ describe("QML safety invariants", () => {
     expect(panel).toContain("color: calm ? root.dim : root.urgent");
     // secondary text dims by alpha, which reads right on light and dark themes alike;
     // Qt.darker on the foreground only works on a dark one
-    expect(panel).toContain("readonly property color dim: Qt.alpha(foreground, 0.66)");
+    expect(panel).toContain("readonly property color dim: appearance.muted");
+    expect(readFileSync(new URL("./BlipAppearance.qml", import.meta.url), "utf8")).toContain("readonly property color muted: Qt.alpha(foreground, 0.66)");
     expect(panel).not.toMatch(/Qt\.darker\((root\.)?foreground/);
   });
 
@@ -449,7 +573,7 @@ describe("QML safety invariants", () => {
     // Three read paths, all gated on `peeking`: the two post-load marks in
     // BlipView and readingSurface() in BarWidget (what the collector is told
     // is being read). Focus entering the compose field is the commit.
-    expect(qmlFunction("markRead")).toContain("if (hostWidget && readActive && !peeking) hostWidget.markThreadRead(chat, seen)");
+    expect(qmlFunction("markRead")).toContain("if (hostWidget && readActive && !peeking) hostWidget.markThreadRead(chat, seen, act)");
     expect(panel.split("root.markRead(root.threadRunningChat, seen)").length - 1).toBe(2);
     expect(panel).not.toContain("root.hostWidget.markThreadRead(");
     expect(panel).toContain("onActiveFocusChanged: if (activeFocus) root.commitPeek()");
@@ -490,6 +614,71 @@ describe("QML safety invariants", () => {
     const panelQml = readFileSync(new URL("./Panel.qml", import.meta.url), "utf8");
     expect(panelQml).toContain("focusTarget: view.inThread ? view.composeEditor : view.navigationKeys");
     expect(panelQml).toContain("onNavigationFocusRequested: view.navigationKeys.forceActiveFocus()");
+  });
+
+  test("the conversation list builds only the rows near the viewport", () => {
+    // A Repeater inside a Flickable instantiates AND renders every row it is
+    // handed, and the popout's layer surface is destroyed on close — so all
+    // ~300 conversations were rebuilt on every open. Measured 2026-09-15 with
+    // a frame-gap probe: 441-627 ms of blocked GUI thread, which froze the
+    // card's 140 ms fade half-way (the panel "hung slightly transparent").
+    expect(panel).toContain(
+      "model: root.online && root.listShowing && !root.searchShowing && !root.newMode ? root.rowsBuilt : 0");
+    expect(panel).toContain("readonly property int rowsBuilt: Math.min(rowBudget, unpinnedThreads.length)");
+    // the COUNT, never a slice: a Repeater handed a new array destroys and
+    // rebuilds every delegate, which is the cost being avoided
+    expect(panel).not.toContain("root.unpinnedThreads.slice(");
+    expect(panel).toContain("readonly property var modelData: root.unpinnedThreads[index] || root.absentThread");
+    // cursorChat is "" when there is no cursor, and so is an absent row's chat
+    expect(panel).toContain(
+      'readonly property bool hasCursor: root.cursorChat !== "" && root.cursorChat === String(modelData.chat)');
+    // closing drops what scrolling built, so the next open is cheap again
+    expect(panel).toContain("else rowBudget = rowBatch");
+  });
+
+  test("a mouse-wheel notch glides, retargeted; a touchpad stays direct", () => {
+    const glide = panel.slice(panel.indexOf("component WheelGlide: Item {"), panel.indexOf("WheelGlide { id: threadGlide"));
+    // a notch mid-glide moves the TARGET, so fast spinning never loses distance
+    expect(glide).toContain("(anim.running ? target : flick.contentY) + dy");
+    expect(glide).toContain("easing.type: Easing.OutCubic");
+    // any foreign contentY write (keys, jumps, the stick, a touchpad) cancels it
+    expect(glide).toContain("if (!glide.writing && Math.abs(glide.flick.contentY - glide.last) > 1) anim.stop()");
+    // pixelDelta (touchpad) never animates, in either list
+    expect(panel).toContain("if (wheel.pixelDelta.y === 0 && root.smoothWheel) threadGlide.by(-d)");
+    expect(panel).toContain("if (wheel.pixelDelta.y === 0 && root.smoothWheel) root.glideConversation(-d)");
+    // the stick follows where the glide is heading
+    expect(qmlFunction("glideConversation")).toContain("flick.stick = convGlide.by(dy) >= max - 4");
+    // image growth above the viewport carries a running glide along
+    expect(panel.split("convGlide.shift(d)").length - 1).toBe(2);
+    // OPT-IN: one bridge.conf key, default OFF (the invariant: never animate
+    // the wheel by default; unproven on an MX Master until Fred's hand says so)
+    expect(widget).toContain("property bool smoothScroll: false");
+    expect(widget).toContain("root.smoothScroll = /^\\s*smooth_scroll\\s*=\\s*['\"]?(on|true|1|yes)\\b/mi.test(t)");
+    expect(widget).toContain("root.smoothScroll = false;");
+    expect(widget).toContain('(root.smoothScroll ? " smooth_scroll=on" : "")');
+    expect(widget).not.toContain('setting("smoothScroll"');
+    expect(panel).toContain("property bool smoothWheel: hostWidget ? hostWidget.smoothScroll === true : false");
+    expect(parseSmoothScroll("")).toBe(false);
+    expect(parseSmoothScroll("host=mac\nscroll_gain=0.25\n")).toBe(false);
+    expect(parseSmoothScroll("smooth_scroll=on")).toBe(true);
+    expect(parseSmoothScroll("smooth_scroll = 'true'\n")).toBe(true);
+    expect(parseSmoothScroll("smooth_scroll=off")).toBe(false);
+    expect(parseSmoothScroll("smooth_scroll=onward")).toBe(false);
+  });
+
+  test("the row budget grows for the wheel and for the keyboard", () => {
+    expect(panel).toContain("onContentYChanged: root.growRowsForScroll()");
+    const grow = qmlFunction("growRowsForScroll");
+    expect(grow).toContain("threadFlick.contentY + threadFlick.height * 2 < threadFlick.contentHeight");
+    // one batch per frame: contentHeight only catches up after a layout pass,
+    // so a synchronous loop would build every row it was trying not to build
+    expect(grow).toContain("rowGrowth.restart()");
+    // End and paging address a row by index, past what is built
+    expect(panel).toContain("onCursorChanged: if (ensureRows(cursor + 2)) cursorCatchUp.restart()");
+    expect(qmlFunction("ensureRows")).toContain(
+      "rowBudget = Math.min(Math.max(n, rowBudget + rowBatch), unpinnedThreads.length)");
+    // scrollCursorIntoView measures a row, so the new one needs a frame first
+    expect(panel).toContain("Timer { id: cursorCatchUp; interval: 16; onTriggered: root.scrollCursorIntoView() }");
   });
 
   test("an old toast can still reopen its conversation (omarchy-exec-argv)", () => {
@@ -545,6 +734,12 @@ test("no source file carries a merge conflict marker", () => {
 // pinned conversation's only unread signal — one unread in a pinned group
 // showed badge 1 and "nothing new in the app". The tile carries the same blue
 // dot the list rows do.
+test("the header unread count is conversations with a blue dot, not inbound rows", () => {
+  expect(widget).toContain("function unreadChatCount");
+  expect(widget).toContain("if ((Number(list[i].unread) || 0) > 0) n++");
+  expect(widget).toContain("root.unread = root.unreadChatCount(root.threads)");
+});
+
 test("a pinned tile shows the unread dot", () => {
   expect(panel).toContain("id: pinnedUnreadDot");
   const dot = panel.slice(panel.indexOf("id: pinnedUnreadDot"), panel.indexOf("id: pinnedUnreadDot") + 700);
@@ -556,15 +751,16 @@ test("a pinned tile shows the unread dot", () => {
 // the theme accent, which on several Omarchy themes is red — a red dot on a
 // messaging icon reads as an error, and red is reserved for alerts anyway.
 test("the icon's unread dot is always iMessage blue", () => {
-  expect(widget).toContain('readonly property color blipAccent: "#0a84ff"');
+  expect(widget).toContain('readonly property color blipAccent: blipAppearance.accent');
   expect(widget).not.toContain("blipAccent:\n    Color.accent");
 });
 
 // Bubbles are iMessage blue on every theme, white text on them, like Messages.
 // They followed the theme accent until 2.3.3 — red on several Omarchy themes.
 test("outgoing bubbles are always iMessage blue with white text", () => {
-  expect(panel).toContain('readonly property color accent: "#0a84ff"');
-  expect(panel).toContain('readonly property color mineText: "#ffffff"');
+  expect(panel).toContain('readonly property color accent: appearance.accent');
+  expect(readFileSync(new URL('./BlipAppearance.qml', import.meta.url), 'utf8')).toContain('readonly property color accent: "#0a84ff"');
+  expect(panel).toContain('readonly property color mineText: appearance.accentText');
   expect(panel).not.toContain("themeHasAccent");
 });
 
@@ -633,6 +829,33 @@ test("follower bars forward right/middle clicks to the leader", () => {
   expect(widget).toContain('code === Qt.RightButton ? "read" : "refresh"');
 });
 
+// QsWindow.window is null while a freshly built bar completes its widgets, so
+// on a monitor hotplug EVERY screen's widget briefly satisfied `!ownScreen`
+// and crowned itself. One real screen must still default to leader — that is
+// what keeps a widget outside any window alive — but with more than one, an
+// unresolved widget waits rather than racing its siblings. The rule itself is
+// tested in screen-leader.test.ts; this pins that the widget uses it.
+test("an unresolved window only claims the crown when it is the only screen", () => {
+  const elect = widget.slice(widget.indexOf("readonly property var ownScreen"),
+                             widget.indexOf("id: followerState"));
+  expect(widget).toContain('import "ScreenLeader.mjs" as ScreenLeader');
+  expect(elect).toContain("leader: ScreenLeader.isLeader(ownScreen, Quickshell.screens)");
+  expect(elect).not.toMatch(/leader:\s*!ownScreen/);
+});
+
+// The follower watchers ARE killed by the leader gate — and then their own
+// backoff timer brings them back. `watchProc.running = true` replaces the
+// `running: root.leader` binding permanently, so from the first restart a
+// follower watched, refreshed and toasted forever: one duplicate desktop
+// notification per extra screen, until the shell was restarted.
+test("the watch restart restores the leader binding, never a bare true", () => {
+  expect(widget).toContain("running: root.leader");
+  expect(widget).not.toMatch(/watchProc\.running\s*=\s*true\b/);
+  const restart = widget.slice(widget.indexOf("id: watchRestart"),
+                               widget.indexOf("// ---", widget.indexOf("id: watchRestart")));
+  expect(restart).toMatch(/running\s*=\s*Qt\.binding\(function\s*\(\)\s*\{\s*return root\.leader\s*\}\)/);
+});
+
 // A URL out of a message is message content: stdin to the preview fetcher, never argv.
 test("link preview URLs never ride argv", () => {
   expect(panel).toContain('["bun", root.previewScript, "--stdin"]');
@@ -647,7 +870,7 @@ test("reads require a rendered snapshot and carry its own timestamp", () => {
   expect(panel).toContain("root.markRead(root.threadRunningChat, seen)");   // through the peek gate, same `seen`
   expect(widget).toContain("s.rendered === true");
   expect(widget).toContain('return s ? String(s.seenTs || "") : ""');
-  expect(widget).toContain("function markThreadRead(chat, seen)");
+  expect(widget).toContain("function markThreadRead(chat, seen, act)");
   for (const host of ["./Panel.qml", "./BlipWindow.qml"]) {
     const src = readFileSync(new URL(host, import.meta.url), "utf8");
     expect(src).toContain("readonly property bool rendered: view.rendered");
@@ -660,6 +883,21 @@ test("window focus is an exact title match, not a prefix", () => {
   const win = readFileSync(new URL("./BlipWindow.qml", import.meta.url), "utf8");
   expect(win).toContain('String(Hyprland.activeToplevel.title || "") === win.title');
   expect(win).not.toContain('.indexOf("Blip") === 0');
+});
+
+// Idle remaps a new client onto the focused workspace. Adopting that as home
+// is what made a walk-away move Blip. A user move is the new home; a remap
+// is sent back. Keep in lockstep with workspaceDecision() in window-restore.ts.
+test("idle remaps do not adopt the focused workspace", () => {
+  expect(window).not.toContain("savedWorkspace = currentWorkspace; saveWinState()");
+  expect(window).toContain('if (reason === "move") return "save"');
+  expect(window).toContain('if (reason === "map" || reason === "monitor") return "return"');
+  expect(window).toContain('runRestore("home", savedWorkspace)');
+  expect(window).toContain('runRestore("return", savedWorkspace, addr || ourAddress())');
+  expect(window).toContain('["bun", win.restoreScript, "prepare", win.savedWorkspace]');
+  expect(window).toContain("/^Blip( \\([0-9]+\\))?$/.test(title)");
+  expect(window).toContain("id: strayReturn");
+  expect(window).toContain("sameAddress");
 });
 
 // Esc over the share sheet closes the sheet; a stale search never stays clickable;
@@ -751,7 +989,6 @@ test("the share sheet steps through a message's links", () => {
   expect(qmlFunction("showShareUrl")).not.toContain('shareQr = ""');
 });
 
-
 test("a thread response taken before a local send or failure cannot replace bubbles", () => {
   const start = panel.indexOf("onStreamFinished: {", panel.indexOf("id: threadProc"));
   const brace = panel.indexOf("{", start);
@@ -801,12 +1038,101 @@ test("tapbacks on picture-only messages get a pill on the picture", () => {
    expect(run(99,0,qt,"sample",{y:0},rect,3)).toBe(false);
  });
 
+describe("a message can carry several files (multi-file drafts)", () => {
+  function source(fn: string, until: string) {
+    const start = panel.indexOf(`function ${fn}`);
+    return panel.slice(start, panel.indexOf(until, start));
+  }
+
+  test("a drop attaches EVERY file, not just the first", () => {
+    // drop.urls[0] attached one photo of five and discarded the rest with no
+    // message — worse than refusing the drop.
+    expect(panel).not.toContain("var u = String(drop.urls[0])");
+    expect(panel).toContain("for (var i = 0; i < drop.urls.length; i++)");
+    expect(panel).toContain("root.addAttachments(paths)");
+  });
+
+  test("the draft is a list, and it is capped", () => {
+    expect(panel).toContain("property var attachDrafts: []");
+    expect(panel).toContain("readonly property int attachMax: 10");
+    // A stray drop of a whole folder is refused, not turned into 80 sends.
+    const add = source("addAttachment", "function addAttachments");
+    expect(add).toContain("root.attachDrafts.length >= root.attachMax");
+    // the same file twice is one attachment
+    expect(add).toContain("root.attachDrafts[i].path === p");
+  });
+
+  test("files ship one part at a time, and only the first carries the caption", () => {
+    // copyProc on current main is a multi-line Process with onExited; slice
+    // to copyText, the next function after the pump.
+    const pump = source("pumpFileSend", "function copyText");
+    // fileSendProc is a single Process: a second start would clobber the first.
+    expect(pump).toContain("if (fileSendProc.running) return");
+    expect(pump).toContain("root.fileQueue = root.fileQueue.slice(1)");
+    // caption over stdin, never argv (audit #4)
+    expect(pump).toContain("--caption-stdin");
+    expect(pump).not.toContain("root.sendCaption]");
+    // spent after the first part, so five files do not post one sentence five times
+    expect(pump).toContain('root.sendCaption = ""');
+  });
+
+  test("only the part that shipped is retired; a failure keeps the rest attached", () => {
+    expect(panel).toContain("root.removeAttachment(root.sendDraftPath)");
+    // mid-batch the field must not clear and focus must not jump
+    expect(panel).toContain("if (root.fileQueue.length > 0)");
+    expect(panel).toContain("still attached");
+  });
+
+  test("draft chips are one per row, never a RowLayout of N", () => {
+    // Summed implicit widths stretch the column past the panel and take every
+    // right-aligned element off-screen with it (CLAUDE.md).
+    expect(panel).toContain("id: attachList");
+    expect(panel).toContain("model: root.attachDrafts");
+    // each chip removes ITSELF, not the whole draft
+    expect(panel).toContain("root.removeAttachment(modelData.path)");
+    expect(panel).toContain("attachList.width");
+  });
+
+  test("switching threads still drops every queued file", () => {
+    // a queued file must never survive into another conversation
+    const clear = source("clearAttachments", "/** Ship the next queued file");
+    expect(clear).toContain("root.attachDrafts = []");
+    expect(clear).toContain("root.fileQueue = []");
+  });
+});
+
+describe("a multi-part send is pinned to the thread it started in", () => {
+  test("the service is captured once, not re-read per part", () => {
+    // root.active can change under a batch; a later part must not go out on a
+    // different service from the first (war room #2).
+    expect(panel).toContain("property string sendService");
+    expect(panel).toContain('root.sendService !== "" ? ["--service", root.sendService] : []');
+    const pump = panel.slice(panel.indexOf("function pumpFileSend"), panel.indexOf("function copyText"));
+    expect(pump).not.toContain("root.active.service");
+  });
+});
+
+// Poll no-op detection must follow optimistic reads, unreads and deletes too.
+// A cache assigned only by polls lets a stale result change the count without
+// updating the actual list, producing a badge with more entries than its tooltip.
+test("poll snapshots compare against the current rendered list", () => {
+  expect(widget).toContain("readonly property string threadsJson: JSON.stringify(threads)");
+  expect(widget).not.toContain("root.threadsJson =");
+  expect(widget).toContain("root.unread = root.unreadChatCount(root.threads)");
+});
+
+test("rendered reactions advance the visible read boundary", () => {
+  expect(panel).toContain('String(list[k].seen_ts || list[k].ts || "")');
+  expect(panel).toContain("if (list[k].pending === true || list[k].scheduled === true) continue");
+});
+
 describe("the accelerator channel is an optimisation, never a dependency", () => {
   test("the leader bar supervises blip-bridged, and only the leader", () => {
     // Two bars would hold two pairs of Mac processes.
-    expect(widget).toContain('command: [root.home + "/bin/blip-bridged"]');
+    // From bin_dir, like every other shim: a fixed ~/bin would miss a moved install.
+    expect(widget).toContain('command: [root.binDir + "/blip-bridged"]');
     const proc = widget.slice(widget.indexOf("id: bridgeProc"), widget.indexOf("id: bridgeRestart"));
-    expect(proc).toContain("running: root.leader");
+    expect(proc).toContain("running: root.leader && root.bridgeConfLoaded");
     expect(proc).toContain("onExited: bridgeRestart.restart()");
   });
 });

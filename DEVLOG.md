@@ -1,5 +1,63 @@
 # Development log
 
+## 2026-09-15 — Match the app before focusing or closing a window
+
+- Restrict the documented Super+M shortcut and the app IPC focus command to
+  `org.quickshell` windows titled exactly `Blip` or `Blip (N)`. An unrelated
+  browser/editor titled “Blip documentation” must not be focused or closed.
+- Preserve the documented toggle behavior for the real app, the bounded map
+  wait, and compositor-based lookup after a shell hot-reload.
+- Verification: 535 Bun tests pass; the eight new shell-command regression
+  cases all fail against the original implementation. Tests execute the actual
+  README/QML commands with synthetic client metadata and intercepted dispatch,
+  IPC and sleep commands. Plugin validation and whitespace checks pass.
+- Existing users must replace their copied keybinding to receive the shortcut
+  correction. No real conversations were opened or messages sent for testing;
+  no layout changes or live shell restart were needed.
+
+## 2026-09-15 — Message context menu and quotation replies
+
+- Right-clicking plain message text offers Quote and reply and Copy message.
+  Right-clicking a link or link preview offers only Open in browser, Copy link
+  and Share link; the existing QR code and LocalSend sheet is retained.
+- Quoting preserves the current draft, returns typing focus to the composer,
+  and does not send. The keyboard shortcut uses the same formatter. Empty or
+  withdrawn messages cannot be quoted; link-only messages use the URL. Long
+  excerpts show an ellipsis and do not split Unicode code points.
+- Link and message menus were visually rechecked after separating their actions;
+  hidden actions are disabled so keyboard navigation skips them.
+- Menu focus blocks the panel navigation catcher. Changing conversations
+  closes the menu so actions cannot target a previous conversation.
+- Verification: 532 source tests pass; the menu passes qmllint. Synthetic
+  Quickshell checks and grim screenshots cover wide/narrow menus, keyboard
+  selection, quotation with an existing draft, restored composer focus, and
+  the existing share sheet. No real messages were read or sent for testing.
+- Deployed only the menu changes onto the existing installed code, preserving
+  unrelated local changes. After shell restart IPC reports online and healthy,
+  and recent shell logs contain no Blip warnings/errors. Installed-copy tests:
+  489 pass, four pre-existing failures involving old installer files and
+  release-documentation versions, reproduced with this patch reversed.
+- Limitation: quotation replies are ordinary messages, not Apple inline reply
+  threads. The change is deployed locally and prepared for upstream review.
+
+## 2026-09-14 — Stay on the last workspace after a walk-away
+
+- Idle, screensaver and display-off remake the shell window on the focused
+  workspace. The earlier restore only covered a shell restart, and then
+  treated that remap as a new home.
+- Keep a live-title compositor rule for the last real workspace. Save a new
+  home only from a user window move. A remap or monitor churn is returned
+  silently, without focus.
+- Verification: 487 TypeScript tests passed, including the home rule,
+  move-vs-remap decision and silent return. Deployed onto this machine and
+  restarted the shell from another workspace: the window came back on
+  workspace 2, unfocused, IPC online and healthy. A compositor move off
+  workspace 2 was returned there by the silent-home path. Full idle-cycle
+  confirmation remains with the user.
+- Known limitation: a compositor that reports a user-looking `movewindow`
+  during display-off can still be adopted as a new home; the live rule is
+  the backstop for the usual close-and-reopen remap.
+
 ## 2026-09-07 — Upstream composer update
 
 - Updated the installed plugin to upstream ba1d8f9 (manifest 2.3.3), including the fix that keeps the cursor visible after a draft exceeds the composer height.

@@ -1,4 +1,7 @@
 import "SendState.mjs" as SendState
+import "MessageActions.mjs" as MessageActions
+import "SourceId.mjs" as SourceId
+import "TapbackActions.mjs" as TapbackActions
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -34,6 +37,22 @@ FocusScope {
 
   // ---- host contract (docs/app-design-review.md) ----------------------
   property var hostWidget: null
+  /** Wheel/touchpad scroll gain for the conversation and the thread list.
+   *  1.0 applies the delta the compositor sends: one wheel notch (angleDelta
+   *  120) moves 120 px and touchpad pixelDelta moves 1:1, so the system
+   *  scroll setting (e.g. Hyprland input:scroll_factor) decides the speed.
+   *  `scroll_gain=` / `touchpad_scroll_gain=` in bridge.conf (read by the
+   *  host, re-read on save) lower it for wheels whose one click is several
+   *  notches; no host, or no key, is 1.0. */
+  property real wheelMultiplier: (hostWidget && hostWidget.scrollGain > 0) ? hostWidget.scrollGain : 1.0
+  property real touchpadMultiplier: (hostWidget && hostWidget.touchpadScrollGain > 0) ? hostWidget.touchpadScrollGain : 1.0
+  /** OPT-IN: with `smooth_scroll=on` in bridge.conf (read by the host),
+   *  mouse-wheel notches (angleDelta, no pixelDelta) glide to their target
+   *  over smoothWheelDuration ms (OutCubic) instead of jumping; see
+   *  WheelGlide. Off, and without a host, every notch jumps, as always.
+   *  Touchpads (pixelDelta) stay 1:1 and immediate either way. */
+  property bool smoothWheel: hostWidget ? hostWidget.smoothScroll === true : false
+  property int smoothWheelDuration: 180
   /** Qt format strings, owned by the host widget (see BarWidget). Empty when no host is
    *  attached or the host has none, which thread.ts and Qt both read as "use the defaults". */
   readonly property string timeFormat: (hostWidget && hostWidget.timeFormat) || ""
@@ -50,57 +69,17 @@ FocusScope {
   property color urgent: Color.urgent
   /** The theme's font, injected by whichever surface hosts this view. */
   property string themeFont: Style.font.family
-  /**
-   * The font Messages actually uses, when this machine has it.
-   *
-   * Omarchy resolves its family to JetBrainsMono system-wide, so every label
-   * here was monospace — the loudest remaining difference from Messages, more
-   * than any spacing. Apple ships SF Pro Text with Messages; a machine themed
-   * to look like a Mac usually already has it, and Qt.fontFamilies() says so
-   * for certain rather than guessing (asking for a missing family silently
-   * yields a default sans, which would be a worse wrong answer than the
-   * theme font).
-   * Order: SF Pro if the machine has it, then Inter — which is OFL-licensed,
-   * ships in Arch's `extra`, and was drawn for exactly this job — then the
-   * theme font, so nothing changes for anyone who has installed neither.
-   * `ui_font=theme` in bridge.conf opts out.
-   *
-   * Blip will never SHIP a font: SF Pro is Apple's and its licence forbids
-   * redistribution, which is why blip-setup installs Inter and only points at
-   * Apple's own download for SF Pro.
-   */
-  readonly property string messagesFont: {
-    var want = ["SF Pro Text", "SF Pro Display", "SF Pro", "Inter"]
-    var have = Qt.fontFamilies()
-    for (var i = 0; i < want.length; i++) if (have.indexOf(want[i]) >= 0) return want[i]
-    return ""
-  }
-  readonly property bool themeFontForced: !!hostWidget && hostWidget.uiFontTheme === true
-  readonly property string fontFamily:
-    (messagesFont !== "" && !themeFontForced) ? messagesFont : themeFont
-  // `ui_font_size=N` in bridge.conf: N is bubble text in px. Unset (0) keeps
-  // Omarchy's tokens. Caption/body keep the same ratios as Style.font.
-  readonly property int uiFontSizePx: {
-    if (!hostWidget) return 0
-    var n = hostWidget.uiFontSize
-    return (typeof n === "number" && n > 0) ? n : 0
-  }
-  readonly property real uiFontScale: {
-    if (uiFontSizePx <= 0) return 1
-    var small = Style.font.bodySmall
-    return small > 0 ? uiFontSizePx / small : 1
-  }
-  readonly property int fontTitle: Math.max(1, Math.round(Style.font.title * uiFontScale))
-  readonly property int fontCaption: Math.max(1, Math.round(Style.font.caption * uiFontScale))
-  readonly property int fontBodySmall: Math.max(1, Math.round(Style.font.bodySmall * uiFontScale))
-  readonly property int fontBody: Math.max(1, Math.round(Style.font.body * uiFontScale))
-  // Secondary text: the foreground at 0.66, as Omarchy's own placeholder text
-  // is. Not Qt.darker: darker is dimmer only on a dark theme — on a light one
-  // it made timestamps heavier than the messages they sit under.
-  readonly property color dim: Qt.alpha(foreground, 0.66)
+  BlipAppearance { id: appearance; hostWidget: root.hostWidget; themeFont: root.themeFont; foreground: root.foreground }
+  readonly property string fontFamily: appearance.fontFamily
+  readonly property real uiFontScale: appearance.uiFontScale
+  readonly property int fontTitle: appearance.fontTitle
+  readonly property int fontCaption: appearance.fontCaption
+  readonly property int fontBodySmall: appearance.fontBodySmall
+  readonly property int fontBody: appearance.fontBody
+  readonly property color dim: appearance.muted
   /** An editor owns the keyboard — the host's key catcher must stand down. */
   readonly property bool editorActive:
-    contactReview.opened || composeField.activeFocus || searchField.activeFocus || newField.activeFocus || bubbleFocused
+    messageMenu.visible || contactReview.opened || composeField.activeFocus || searchField.activeFocus || newField.activeFocus || bubbleFocused
   readonly property alias composeEditor: composeField
   readonly property real contentHeightHint: listContent.implicitHeight
   /** The view wants keyboard navigation focus back (list mode). */
@@ -111,12 +90,12 @@ FocusScope {
   // on the themes where that accent is red "my" messages read as errors;
   // Fred, 2026-09-04: "Yes make the bubbles blue too" — blue bubbles are the
   // look, not a theme preference. White text on that blue, as Messages does.
-  readonly property color accent: "#0a84ff"
+  readonly property color accent: appearance.accent
   readonly property color cyan: accent            // legacy name; accents/links
   readonly property color okColor: accent
 
   readonly property color mineFill: accent
-  readonly property color mineText: "#ffffff"
+  readonly property color mineText: appearance.accentText
   readonly property color theirsFill: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.14)
   // Omarchy's hover-cursor fill for rows and the bubble band alike: the theme's
   // colour and alpha (foreground at 0.08 by default), not a hard-coded copy of them.
@@ -179,15 +158,23 @@ FocusScope {
   property var attMetrics: ({})
   property var fetchQueue: []
   property string fetchingId: ""
-  // Compose draft attachment (one per message in v1).
-  property string draftPath: ""
-  property string draftLabel: ""
+  // Queued attachments, oldest first: [{ path, label }]. A single draft could
+  // only ever ship the first of five dropped photos, silently discarding the
+  // rest — a drop that loses four files with no message is worse than a
+  // refusal. Sends go out one part per file, in this order.
+  property var attachDrafts: []
+  readonly property int attachCount: attachDrafts.length
+  /** How many files one message may carry. A stray drop of a whole folder
+   *  should be refused, not turned into eighty sends. */
+  readonly property int attachMax: 10
   // What the in-flight file send / paste belong to, so late completions
   // can't clobber a NEWER draft or land in a DIFFERENT conversation.
   property string sendDraftPath: ""
   property string pasteChat: ""
 
   readonly property var threads: hostWidget ? hostWidget.threads : []
+  // Stand-in for a row whose thread is gone for a tick (see the list delegate).
+  readonly property var absentThread: ({ chat: "", handle: "", name: "", unread: 0, participants: [] })
   readonly property var pinnedThreads: root.threads.filter(function(t) { return t.pinned === true })
   readonly property var unpinnedThreads: root.threads.filter(function(t) { return t.pinned !== true })
   readonly property bool online: hostWidget ? hostWidget.online : false
@@ -350,12 +337,79 @@ FocusScope {
   // return to it), but a row must not LOOK selected while typing happens
   // elsewhere — Up from the top and a click in the field both got here.
   readonly property bool cursorShown: !searchField.activeFocus
+
+  // ---- how many conversation rows actually exist ----------------------
+  //
+  // The list is a Repeater inside a Flickable, so every row it is handed is
+  // instantiated AND rendered every frame — the ~290 below the fold included.
+  // The popout's layer surface is destroyed on close, which releases the
+  // scene graph, so opening rebuilt all of them from scratch: ~500 ms of
+  // blocked GUI thread, during which the card's 140 ms fade froze half-way
+  // and the panel sat there translucent before snapping in. Measured
+  // 2026-09-15 with a FrameAnimation frame-gap probe, 300 conversations:
+  // 441/476/484/496/580/627 ms of gap on open. Capped at 20 rows: no gap at
+  // all, and the model assignment fell from 228 ms to 19 ms.
+  //
+  // So only the rows near the viewport exist. `rowBudget` grows as the reader
+  // scrolls toward the end of what is built, and resets when the surface
+  // closes — the next open is cheap again. The model is the COUNT, not a
+  // slice: a Repeater given a new array destroys and rebuilds every delegate,
+  // which is the cost being avoided, while an int model only appends the new
+  // ones (and a `threads` refresh now re-evaluates bindings instead of
+  // rebuilding 300 rows).
+  readonly property int rowBatch: 24        // ≈2 viewports at either density
+  property int rowBudget: rowBatch
+  readonly property int rowsBuilt: Math.min(rowBudget, unpinnedThreads.length)
+  /** Make sure row `n` exists. True when that actually built anything, so the
+   *  caller can defer the work that needs the new row laid out. */
+  function ensureRows(n) {
+    if (n <= rowBudget || rowBudget >= unpinnedThreads.length) return false
+    rowBudget = Math.min(Math.max(n, rowBudget + rowBatch), unpinnedThreads.length)
+    return true
+  }
+  /** Within a viewport of the last built row → build the next batch. */
+  function growRowsForScroll() {
+    if (!listShowing || searchShowing || newMode || rowBudget >= unpinnedThreads.length) return
+    if (threadFlick.contentY + threadFlick.height * 2 < threadFlick.contentHeight) return
+    rowBudget = Math.min(rowBudget + rowBatch, unpinnedThreads.length)
+    // One batch per frame, re-checked once it has been laid out: a jump
+    // straight to the end (the scrollbar dragged down) needs several, and
+    // contentHeight only catches up after the layout pass, so a synchronous
+    // loop here would build every row it was trying not to build.
+    rowGrowth.restart()
+  }
+  Timer { id: rowGrowth; interval: 16; onTriggered: root.growRowsForScroll() }
+  // scrollCursorIntoView is synchronous because a cursor move does not
+  // normally touch the model. When it just built the row, it does — give the
+  // layout a frame before measuring where the row landed.
+  Timer { id: cursorCatchUp; interval: 16; onTriggered: root.scrollCursorIntoView() }
+  // A cursor jump (End, paging) can address a row past what is built. Pinned
+  // threads sort ahead of unpinned in `threads`, so the cursor index is never
+  // smaller than the row's index here — over-asking is safe.
+  onCursorChanged: if (ensureRows(cursor + 2)) cursorCatchUp.restart()
   // The bubble the arrows have selected in a conversation (-1 = none) and the
   // delegate drawing it — registered by the row itself, like cursorRow. The
   // selection is a TARGET for actions (copy, open, reply), not a scroll state.
   property int bubbleCursor: -1
   property Item bubbleCursorItem: null
-  onBubblesChanged: clearBubbleCursor()   // a reload renumbers the rows
+  // A reload renumbers the rows: the selection follows its bubble by guid
+  // (a tapback landing on it is a reload too), and goes when the bubble does.
+  property string bubbleCursorGuid: ""
+  onBubbleCursorChanged: bubbleCursorGuid = bubbleCursor >= 0 && bubbleCursor < bubbles.length ? String(bubbles[bubbleCursor].guid || "") : ""
+  onBubblesChanged: {
+    var keep = bubbleCursorGuid
+    clearBubbleCursor()
+    // an open menu follows its message into the new rows (a landed tapback
+    // changes which one is yours), or closes when the message is gone
+    var menuGuid = messageMenu.opened && messageContext ? String(messageContext.guid || "") : ""
+    if (menuGuid !== "") {
+      var m = MessageActions.bubbleIndexByGuid(bubbles, menuGuid)
+      if (m >= 0) messageContext = bubbles[m]
+      else messageMenu.close()
+    }
+    // after the Repeater has its new rows, so the row's hasCursor change registers it
+    if (keep !== "") Qt.callLater(root.restoreBubbleCursor, keep)
+  }
   property bool pinToBottom: false   // scroll to the newest bubble once layout settles
   property bool bubbleFocused: false // a bubble's TextEdit has focus (text selection in progress)
   property string threadRunningChat: "" // chat owned by the current threadProc
@@ -368,10 +422,20 @@ FocusScope {
   property int nextSendId: 0
   property int pendingRevision: 0
   property int threadPendingRevision: 0
+  property bool threadTapbackDone: false // this load started after imsg-react exited 0
   property string sendStamp: ""         // local "YYYY-MM-DD HH:mm:ss" the current send was typed at
   // Text sends queue instead of refusing while one is on the wire; each gets
   // its bubble the instant Enter is pressed (see pendingSends).
   property var sendQueue: []
+  // Files still to ship for the send in flight: one part per file, in order.
+  // The caption rides the FIRST part only — repeating it on each would post
+  // the same sentence five times.
+  property var fileQueue: []
+  property string sendCaption: ""
+  // The service is captured when the batch STARTS, never re-read per part:
+  // root.active can change under a multi-part send, and a later part must not
+  // go out on a different service from the first (war room #2).
+  property string sendService: ""
   // Sends the Mac has not written a row for yet, {chat, text, ts}. Every
   // thread reload carries them to thread.ts (--pending-stdin, never argv),
   // which keeps their bubbles until the real row lands. Memory only.
@@ -431,7 +495,7 @@ FocusScope {
     }
   }
   // Same rule as collector.isGroupChat(): anything that is not a phone/email.
-  function isGroupId(c) { c = String(c || ""); return c !== "" && !/^\+?[0-9]{5,}$/.test(c) && c.indexOf("@") < 0 }
+  function isGroupId(c) { c = String(c || ""); return c !== "" && !/^\+?[0-9]{3,15}$/.test(c) && c.indexOf("@") < 0 }
   readonly property bool activeIsGroup: inThread && isGroupId(active.chat)
 
   /**
@@ -445,7 +509,7 @@ FocusScope {
     if (!t) return false
     var c = String(t.chat || "")
     if (isGroupId(c)) return /^[A-Za-z]+;[+-];.+$/.test(String(t.guid || ""))
-    return /^\+?[0-9]{5,}$/.test(c) || c.indexOf("@") > 0
+    return /^\+?[0-9]{3,15}$/.test(c) || c.indexOf("@") > 0
   }
 
   // Unsent compose text per chat id. It lives on the host (BarWidget.draftCache)
@@ -458,6 +522,7 @@ FocusScope {
    *  load still in flight is ignored when it lands, and a share sheet over it
    *  goes too (it belonged to the link you were looking at). */
   function clearThread() {
+    messageMenu.close()
     closeShare()
     peekTimer.stop()
     peeking = false
@@ -495,9 +560,10 @@ FocusScope {
   }
 
   function back() {
+    root.stopAudio() // leaving the conversation stops its voice message
     clearThread()
     composeField.text = ""
-    clearDraft()   // a queued file must never survive into another thread
+    clearAttachments()   // a queued file must never survive into another thread
     pinToBottom = false
     // Top of the list for a mouse user; the cursor row for a keyboard user.
     Qt.callLater(function() {
@@ -509,6 +575,8 @@ FocusScope {
 
   function isShowing(t) { return inThread && String(active.chat) === String(t.chat) }
   function openThread(t) {
+    root.stopAudio() // another conversation: the last one's voice message stops
+
     if (!t) return
     // A sheet opened over the PREVIOUS conversation (an arriving link opens it
     // by itself) otherwise floats over this one, offering a QR for a link that
@@ -535,10 +603,13 @@ FocusScope {
   }
   /** The one gate for "this thread was looked at": a surface that marks read,
    *  and not a thread merely peeked. */
-  function markRead(chat, seen) {
-    if (hostWidget && readActive && !peeking) hostWidget.markThreadRead(chat, seen)
+  function markRead(chat, seen, act) {
+    if (hostWidget && readActive && !peeking) hostWidget.markThreadRead(chat, seen, act)
   }
   function showThread(t) {
+    messageMenu.close()
+    // a tapback the tool already confirmed is settled by chat.db, not carried along
+    if (root.pendingTapback && root.pendingTapback.done) root.pendingTapback = null
     active = t
     activeLastTs = String(t.last_ts || "")
     bubbles = []
@@ -548,10 +619,12 @@ FocusScope {
     firstLoad = true
     pushPending = false
     note = ""
+    // a tapback that failed while you were elsewhere is said where it was sent
+    if (root.tapbackNote && root.tapbackNote.chat === String(t.chat)) { note = root.tapbackNote.text; root.tapbackNote = null }
     loading = true
     composeField.text = drafts[String(t.chat)] || ""   // this conversation's unsent text
     composeField.cursorPosition = composeField.length
-    clearDraft()   // a queued file must never survive into another thread
+    clearAttachments()   // a queued file must never survive into another thread
     requestThreadLoad(String(t.chat))
   }
 
@@ -565,6 +638,7 @@ FocusScope {
     threadRunningChat = pendingThreadChat
     pendingThreadChat = ""
     root.threadPendingRevision = root.pendingRevision
+    root.threadTapbackDone = !!(root.pendingTapback && root.pendingTapback.done)
     var pending = root.pendingSends.filter(function(p) { return p.chat === threadRunningChat })
     threadProc.command = ["bun", root.threadScript, threadRunningChat, "80",
                           "--time-format", root.timeFormat,
@@ -595,6 +669,73 @@ FocusScope {
     flick.contentY = Math.max(0, Math.min(max, flick.contentY + dy))
     flick.stick = flick.contentY >= max - 4
   }
+  /** The wheel's animated twin of scrollConversation: the stick follows where
+   *  the glide is HEADING, so a glide toward the newest re-arms it at once
+   *  (a new message then snaps to the bottom and ends the glide) and one
+   *  away releases it before anything can pull the view back down. */
+  function glideConversation(dy) {
+    var max = Math.max(0, flick.contentHeight - flick.height)
+    flick.stick = convGlide.by(dy) >= max - 4
+  }
+
+  /** Smooth mouse-wheel scrolling for one Flickable. by(dy) animates contentY
+   *  toward a target clamped to the content; a notch that arrives mid-glide
+   *  moves the TARGET (not the current position), so fast spinning
+   *  accumulates and never loses distance, and the glide is retargeted rather
+   *  than restarted from scratch (the old restarted-easing scheme fought
+   *  hi-res wheels). Any contentY write that is not the glide's own (keys,
+   *  a jump, the bottom-stick, the scrollbar, a touchpad) cancels it; the
+   *  Flickable's own sub-pixel rounding on a contentHeight change does not. */
+  component WheelGlide: Item {
+    id: glide
+    property Flickable flick: null
+    property int duration: 180
+    property real target: 0
+    property real pos: 0
+    property real last: 0          // the contentY the glide itself wrote
+    property bool writing: false
+    readonly property bool running: anim.running
+    onPosChanged: { writing = true; flick.contentY = pos; last = flick.contentY; writing = false }
+    Connections {
+      target: glide.flick
+      function onContentYChanged() {
+        if (!glide.writing && Math.abs(glide.flick.contentY - glide.last) > 1) anim.stop()
+      }
+    }
+    NumberAnimation { id: anim; target: glide; property: "pos"; easing.type: Easing.OutCubic }
+    function stop() { anim.stop() }
+    /** Returns the contentY this glide is heading for. */
+    function by(dy) {
+      var max = Math.max(0, flick.contentHeight - flick.height)
+      var to = Math.max(0, Math.min(max, (anim.running ? target : flick.contentY) + dy))
+      anim.stop()
+      target = to
+      if (duration <= 0) flick.contentY = to
+      else if (Math.abs(to - flick.contentY) >= 0.5) {
+        anim.duration = duration
+        last = flick.contentY
+        anim.from = flick.contentY
+        anim.to = to
+        anim.start()
+      }
+      return to
+    }
+    /** Content above the viewport grew by d (an image decoded): keep the
+     *  reader anchored and carry a running glide along instead of dropping it. */
+    function shift(d) {
+      if (!anim.running) { flick.contentY = Math.max(0, flick.contentY + d); return }
+      var to = Math.max(0, target + d)
+      anim.stop()
+      flick.contentY = Math.max(0, flick.contentY + d)
+      target = to
+      last = flick.contentY
+      anim.from = flick.contentY
+      anim.to = to
+      anim.start()
+    }
+  }
+  WheelGlide { id: threadGlide; flick: threadFlick; duration: root.smoothWheelDuration }
+  WheelGlide { id: convGlide; flick: flick; duration: root.smoothWheelDuration }
   /** Up/Down in an empty compose field walk the bubbles, newest first, and
    *  keep the selected one in view. Down past the newest drops the selection
    *  and re-sticks to the bottom, so the conversation follows new messages
@@ -644,6 +785,11 @@ FocusScope {
       scrollConversation(it.y + it.height + margin - flick.height - flick.contentY)
   }
   function clearBubbleCursor() { bubbleCursor = -1; bubbleCursorItem = null }
+  function restoreBubbleCursor(guid) {
+    if (bubbleCursor >= 0) return   // the arrows moved meanwhile
+    var i = MessageActions.bubbleIndexByGuid(bubbles, guid)
+    if (i >= 0) bubbleCursor = i
+  }
   /** Out of the selection and back where reading started: newest at the
    *  bottom, stick re-armed. Down past the newest and Esc both land here. */
   function leaveBubbles() {
@@ -677,13 +823,19 @@ FocusScope {
    *  inline reply is not reachable through the bridge (no message GUID leaves
    *  the Mac and AppleScript has no reply-to), so this is a plain "> quote". */
   function quoteBubble(b) {
-    composeField.text = "> " + String(b.text || "").replace(/\s+/g, " ").slice(0, 200) + "\n"
+    composeField.text = MessageActions.quotedDraft(b, composeField.text)
     composeField.cursorPosition = composeField.length
     leaveBubbles()
+    Qt.callLater(function() { composeField.forceActiveFocus() })
   }
   function markAllRead() {
     if (!root.hostWidget || root.unread === 0) return
     root.hostWidget.markAllRead()
+  }
+  function markUnread(t) {
+    if (!t || !root.hostWidget) return
+    if (isShowing(t) || (inThread && String(active.chat) === String(t.chat))) back()
+    root.hostWidget.markThreadUnread(String(t.chat))
   }
 
   /** Chip icon for an attachment's mime type. */
@@ -711,6 +863,8 @@ FocusScope {
     property bool mine: false
     property var tapbacks: []
     visible: (tapbacks || []).length > 0
+    // a tapback on its way (tapback-actions.ts shownTapbacks) draws dimmed
+    opacity: (tapbacks || []).some(function(t) { return t.pending === true }) ? 0.45 : 1
     width: Math.ceil(pillText.implicitWidth) + Style.space(12)
     height: Math.ceil(pillText.implicitHeight) + Style.space(8)
     radius: height / 2
@@ -736,6 +890,10 @@ FocusScope {
   // ---------------------------------------------------- attachment fetching
 
   function isImageMime(m) { return String(m || "").indexOf("image/") === 0 }
+  /** Formats that MOVE — they render through AnimatedImage, not Image, and
+   *  fetch.ts keeps them off the resampling path that would flatten them.
+   *  Mirrors isAnimatedMime() in fetch.ts; keep the two in step. */
+  function isAnimatedMime(m) { return String(m || "").toLowerCase() === "image/gif" }
   function linkHost(u) { var m = /^https?:\/\/([^/?#]+)/i.exec(String(u || "")); return (m ? m[1] : String(u || "")).replace(/^www\./, "").toLowerCase() }
   /** Only http(s) ever reaches xdg-open from a card (thread.ts filters too). */
   function openLink(u) {
@@ -840,7 +998,14 @@ FocusScope {
     root.putAvatarFiles(m)
     for (var i = 0; i < keys.length; i++) root.requestAvatar(keys[i])
   }
-  onSurfaceOpenChanged: if (surfaceOpen) root.retryBareAvatars()
+  onSurfaceOpenChanged: {
+    if (surfaceOpen) root.retryBareAvatars()
+    // Closed: drop the rows scrolling built, so the next open is cheap again.
+    else rowBudget = rowBatch
+    // Closing the surface stops a voice message (Fred, 2026-09-26: it kept
+    // talking after he clicked away).
+    if (!surfaceOpen) root.stopAudio()
+  }
   function pumpAvatar() {
     if (avatarProc.running || avatarQueue.length === 0) return
     avatarInFlight = avatarQueue.slice(0, 1024)
@@ -881,6 +1046,41 @@ FocusScope {
       Qt.callLater(root.pumpAvatar)
     }
   }
+  /** Voice messages play WITHOUT a window. xdg-open handed audio to mpv,
+   *  which opens an empty black video window for a sound file (Fred,
+   *  2026-09-26). mpv runs with --no-video --force-window=no; the chip toggles:
+   *  a second click on the same file stops it, a click on another stops the
+   *  first. The path is an argument, never interpolated; without mpv the file
+   *  still goes to xdg-open. */
+  property string playingAudio: ""
+  function toggleAudio(path) {
+    if (path === "") return
+    var same = audioPlayer.running && root.playingAudio === path
+    if (audioPlayer.running) audioPlayer.running = false
+    if (same) {
+      root.playingAudio = ""
+      root.note = "stopped"
+      noteTimer.restart()
+      return
+    }
+    root.playingAudio = path
+    audioPlayer.command = ["sh", "-c",
+      'if command -v mpv >/dev/null 2>&1; then exec mpv --no-video --force-window=no --no-terminal --really-quiet -- "$1"; else exec xdg-open "$1"; fi',
+      "sh", path]
+    audioPlayer.running = true
+    root.note = "playing, click again to stop"
+    noteTimer.restart()
+  }
+  Process {
+    id: audioPlayer
+    onExited: function(code, status) { root.playingAudio = "" }
+  }
+  function stopAudio() {
+    if (audioPlayer.running) audioPlayer.running = false
+    root.playingAudio = ""
+  }
+  Component.onDestruction: root.stopAudio()
+
   /** Only media/documents are handed to xdg-open. Anything a sender could
    *  make executable (scripts, .desktop, unknown blobs) is saved and named,
    *  never launched (Codex audit #10). */
@@ -967,18 +1167,41 @@ FocusScope {
 
   // ------------------------------------------------------ compose attachment
 
-  function setDraft(path) {
+  /** Queue one more file on the draft. The same path twice is one attachment. */
+  function addAttachment(path) {
     var p = String(path || "")
     if (p === "") return
-    draftPath = p
+    for (var i = 0; i < root.attachDrafts.length; i++) if (root.attachDrafts[i].path === p) return
+    if (root.attachDrafts.length >= root.attachMax) {
+      root.note = "at most " + root.attachMax + " files per message"
+      return
+    }
     var parts = p.split("/")
-    draftLabel = parts[parts.length - 1] || "file"
+    root.attachDrafts = root.attachDrafts.concat([{ path: p, label: parts[parts.length - 1] || "file" }])
     Qt.callLater(function() { composeField.forceActiveFocus() })
   }
 
-  function clearDraft() {
-    draftPath = ""
-    draftLabel = ""
+  /** Queue several at once — a multi-file drop. Reports what would not fit
+   *  rather than dropping it on the floor. */
+  function addAttachments(paths) {
+    var before = root.attachDrafts.length
+    for (var i = 0; i < (paths || []).length; i++) {
+      if (root.attachDrafts.length >= root.attachMax) {
+        root.note = "attached " + (root.attachDrafts.length - before) + " — at most "
+                  + root.attachMax + " files per message"
+        return
+      }
+      root.addAttachment(paths[i])
+    }
+  }
+
+  function removeAttachment(path) {
+    root.attachDrafts = root.attachDrafts.filter(function(d) { return d.path !== String(path) })
+  }
+
+  function clearAttachments() {
+    root.attachDrafts = []
+    root.fileQueue = []
   }
 
   function startPaste() {
@@ -1329,35 +1552,35 @@ FocusScope {
     if (trimmed.indexOf("/attach ") === 0) {
       var p = trimmed.slice(8).trim()
       if (p.indexOf("~/") === 0) p = root.home + p.slice(1)
-      setDraft(p)
+      addAttachment(p)
       composeField.text = ""
-      note = "attached — type a caption or press Enter to send"
+      note = root.attachCount > 1
+        ? root.attachCount + " files attached — caption, or Enter to send"
+        : "attached — type a caption or press Enter to send"
       return
     }
 
-    if (draftPath === "" && trimmed === "") return
+    if (root.attachCount === 0 && trimmed === "") return
     if (!isSendable(root.active)) {
       note = "Read-only — group id unknown — send from your phone"
       return
     }
 
-    if (draftPath !== "") {
+    if (root.attachCount > 0) {
       if (sendProc.running || fileSendProc.running) {
         note = "a message is already sending"
         return
       }
-      note = "sending…"
       sendChat = String(root.active.chat)
       sendText = text
-      // send-file.ts owns target resolution (group guid or DM handle).
-      sendDraftPath = draftPath
-      // caption on stdin — never in this process's argv (audit #4, war room #1/#13)
-      fileSendProc.command = ["bun", root.sendFileScript, sendChat, draftPath, "--caption-stdin"]
-        .concat(/^(SMS|RCS)$/i.test(String(root.active.service || "")) ? ["--service", String(root.active.service).toUpperCase()] : [])
-      fileSendProc.stdinEnabled = true
-      fileSendProc.running = true
-      fileSendProc.write(trimmed !== "" ? text : "")
-      fileSendProc.stdinEnabled = false
+      // One part per file, in the order they were queued; the caption goes
+      // with the first only. fileSendProc is a single Process, so they ship
+      // strictly one at a time — pumpFileSend() starts the next as each lands.
+      root.fileQueue = root.attachDrafts.map(function(d) { return d.path })
+      root.sendCaption = trimmed
+      var svc = String(root.active.service || "")
+      root.sendService = /^(SMS|RCS)$/i.test(svc) ? svc.toUpperCase() : ""
+      pumpFileSend()
       return
     }
 
@@ -1365,7 +1588,7 @@ FocusScope {
     // writing the row) happens behind it. The field clears at once, so a
     // second message can follow without waiting — sends queue in order.
     var chat = String(root.active.chat)
-    var stamp = root.localStamp()
+    var stamp = root.wireStamp()
     var target = root.activeIsGroup
       ? ["--chat-id", String(root.active.guid)]
       : ["--to", chat]
@@ -1383,9 +1606,27 @@ FocusScope {
     pumpSend()
   }
 
-  /** Local wall clock as a chat.db-style stamp; the pending bubble's ts. */
-  function localStamp() {
-    return Qt.formatDateTime(new Date(), "yyyy-MM-dd HH:mm:ss")
+  /** Now in the bridge's WIRE format (UTC ISO-8601): the pending bubble's ts.
+   *  It is compared against real message stamps — which are UTC — so a local
+   *  wall clock here would put every in-flight bubble hours out of order. */
+  function wireStamp() {
+    return new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
+  }
+
+  /** Wire stamp → epoch ms. Mirrors stampMs() in thread.ts, including the
+   *  fallback that reads a pre-UTC stamp as local. */
+  function stampMs(ts) {
+    var t = String(ts || "")
+    if (t === "") return NaN
+    return Date.parse(t.indexOf("T") >= 0 ? t : t.replace(" ", "T"))
+  }
+
+  /** The LOCAL calendar date a wire stamp falls on — day dividers break at
+   *  the reader's midnight, never UTC's. Mirrors localDay() in thread.ts. */
+  function localDay(ts) {
+    var ms = stampMs(ts)
+    if (isNaN(ms)) return ""
+    return Qt.formatDate(new Date(ms), "yyyy-MM-dd")
   }
 
   /** The instant echo: thread.ts's pendingBubble() in miniature — enough to
@@ -1394,8 +1635,8 @@ FocusScope {
   function appendPendingBubble(list, text, stamp, localId) {
     var out = (list || []).slice()
     var prev = out.length ? out[out.length - 1] : null
-    var newDay = !prev || String(prev.ts || "").slice(0, 10) !== stamp.slice(0, 10)
-    var gapMin = prev ? (Date.parse(stamp.replace(" ", "T")) - Date.parse(String(prev.ts || "").replace(" ", "T"))) / 60000 : Infinity
+    var newDay = !prev || root.localDay(prev.ts) !== root.localDay(stamp)
+    var gapMin = prev ? (root.stampMs(stamp) - root.stampMs(prev.ts)) / 60000 : Infinity
     var start = !prev || newDay || prev.from_me !== true || !(gapMin <= 15)
     if (!start) { var p = Object.assign({}, prev); p.groupEnd = false; p.time = ""; out[out.length - 1] = p }
     out.push({ localId: localId, ts: stamp, from_me: true, name: "", text: String(text).trim(), day: newDay ? "Today" : "",
@@ -1429,11 +1670,34 @@ FocusScope {
     root.reloadTries = 0
     // Body on STDIN (--text-stdin), never argv: argv is readable by every
     // process on this machine and travels through ssh into the Mac's ps.
-    sendProc.command = [root.home + "/bin/imsg-send"].concat(job.target).concat(["--yes", "--text-stdin", "--keep-dashes"])
+    // Which program sends is source-id.ts's answer for this conversation — in
+    // stock Blip always the Mac's imsg-send in bin_dir, exactly as before.
+    sendProc.command = SourceId.bridgeArgv(job.chat, "imsg-send", hostWidget ? hostWidget.binDir : root.home + "/bin").concat(job.target).concat(["--yes", "--text-stdin", "--keep-dashes"])
     sendProc.stdinEnabled = true
     sendProc.running = true
     sendProc.write(job.text)
     sendProc.stdinEnabled = false
+  }
+
+  /** Ship the next queued file. The caption rides the FIRST part only, and
+   *  goes over stdin — never this process's argv (audit #4, war room #1/#13). */
+  function pumpFileSend() {
+    if (fileSendProc.running) return
+    if (root.fileQueue.length === 0) return
+    var path = root.fileQueue[0]
+    root.fileQueue = root.fileQueue.slice(1)
+    root.sendDraftPath = path
+    var left = root.fileQueue.length
+    root.note = left > 0 ? "sending… (" + (left + 1) + " left)" : "sending…"
+    // send-file.ts owns target resolution (group guid or DM handle).
+    fileSendProc.command = ["bun", root.sendFileScript, root.sendChat, path, "--caption-stdin"]
+      .concat(root.sendService !== "" ? ["--service", root.sendService] : [])
+    fileSendProc.stdinEnabled = true
+    fileSendProc.running = true
+    fileSendProc.write(root.sendCaption)
+    fileSendProc.stdinEnabled = false
+    // Spent: only the first part carries it.
+    root.sendCaption = ""
   }
 
   property string copyFeedback: ""
@@ -1472,13 +1736,15 @@ FocusScope {
   // The same patterns as the bubbles: today the time, older rows the date and
   // the time, with the year once it is not this year.
   function fmtTime(ts) {
-    var s = String(ts || "")
-    if (s.length < 16) return s
+    var ms = root.stampMs(ts)
+    if (isNaN(ms)) return String(ts || "")
     var now = new Date()
-    var at = new Date(+s.substring(0, 4), +s.substring(5, 7) - 1, +s.substring(8, 10),
-                      +s.substring(11, 13), +s.substring(14, 16))
+    // The stamp is UTC; every label below is the reader's local time. Reading
+    // the digits out of the string (as this did) showed a Mac's clock, and
+    // compared it against a Linux date.
+    var at = new Date(ms)
     var clock = Qt.formatTime(at, root.timeFormat)
-    if (s.substring(0, 10) === Qt.formatDate(now, "yyyy-MM-dd")) return clock
+    if (Qt.formatDate(at, "yyyy-MM-dd") === Qt.formatDate(now, "yyyy-MM-dd")) return clock
     // Messages stamps a row "Yesterday", then the weekday for the last week,
     // then a date — never a date-plus-clock, which is what a mail client does.
     var midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -1509,13 +1775,19 @@ FocusScope {
           var d = JSON.parse(text.trim())
           if (d.ok === true) {
             var list = Array.isArray(d.bubbles) ? d.bubbles : []
+            root.pendingTapback = TapbackActions.pendingAfterLoad(root.pendingTapback, root.threadRunningChat, list, root.threadTapbackDone)
+            // the tool is done but chat.db does not show it yet (a self-thread's echo lags): look again
+            if (root.threadTapbackDone && root.pendingTapback && root.pendingTapback.chat === root.threadRunningChat) {
+              root.reloadChat = root.threadRunningChat
+              reloadTimer.restart()
+            }
             var j = JSON.stringify(list)
             // What the eye can now see: the newest ts in THIS snapshot — of
             // real rows; a pending bubble carries this machine's clock.
             var seen = ""
             for (var k = 0; k < list.length; k++) {
-              if (list[k].pending === true) continue
-              var ts = String(list[k].ts || ""); if (ts > seen) seen = ts
+              if (list[k].pending === true || list[k].scheduled === true) continue
+              var ts = String(list[k].seen_ts || list[k].ts || ""); if (ts > seen) seen = ts
             }
             // thread.ts hands back the sends it is still waiting on for this
             // chat; keep asking for a few seconds, then leave it to the next
@@ -1553,11 +1825,14 @@ FocusScope {
             // and only through what loaded, never the sidebar's newer ts.
             root.markRead(root.threadRunningChat, seen)
           } else {
+            // a failed load settles a confirmed tapback too, or the menu stays busy
+            root.pendingTapback = TapbackActions.pendingAfterLoad(root.pendingTapback, root.threadRunningChat, [], root.threadTapbackDone)
             root.bubbles = []
             root.rendered = false
             root.note = String(d.error || "could not load this thread")
           }
         } catch (e) {
+          root.pendingTapback = TapbackActions.pendingAfterLoad(root.pendingTapback, root.threadRunningChat, [], root.threadTapbackDone)
           root.bubbles = []
           root.rendered = false
           root.note = "could not load this thread"
@@ -1611,6 +1886,36 @@ FocusScope {
     }
   }
 
+  Process {
+    id: reactProc
+    property string chat: ""  // the conversation this run's tapback is in
+    property string lastErr: ""
+    // A Process that fails to start emits no exited (see BarWidget's collector):
+    // without this the pill would stay dimmed and the menu busy for good.
+    property bool sawExit: false
+    onRunningChanged: {
+      if (running) { sawExit = false; return }
+      Qt.callLater(function() {
+        if (!reactProc.sawExit && !reactProc.running) root.tapbackFailed(reactProc.chat, TapbackActions.TAPBACK_NOT_STARTED)
+      })
+    }
+    stderr: StdioCollector { onStreamFinished: reactProc.lastErr = text }
+    onExited: function(code, status) {
+      reactProc.sawExit = true
+      if (code === 0) {
+        // the thread was left while it ran: nothing on screen is waiting for it
+        if (!root.inThread || String(root.active.chat) !== reactProc.chat) root.pendingTapback = null
+        else if (root.pendingTapback) {
+          root.pendingTapback = Object.assign({}, root.pendingTapback, { done: true })
+          // the tool saw the row in chat.db before it exited: load now, not after reloadTimer
+          root.requestThreadLoad(reactProc.chat)
+        }
+      } else {
+        root.tapbackFailed(reactProc.chat, TapbackActions.tapbackFailure(code, reactProc.lastErr))
+      }
+    }
+  }
+
   // Attachment fetcher: one job at a time off root.fetchQueue.
   Process {
     id: fetchProc
@@ -1646,7 +1951,9 @@ FocusScope {
             root.note = "copied"
             noteTimer.restart()
           } else if (d.ok === true && root.fetchJobAction === "open") {
-            if (root.openableMime(root.fetchJobMime)) {
+            if (String(root.fetchJobMime || "").indexOf("audio/") === 0) {
+              root.toggleAudio(String(d.path || ""))
+            } else if (root.openableMime(root.fetchJobMime)) {
               Quickshell.execDetached(["xdg-open", String(d.url || "")])
             } else {
               root.note = "saved, not opened (" + (root.fetchJobMime || "unknown type") + "): " + String(d.path || "")
@@ -1681,7 +1988,7 @@ FocusScope {
         if (!root.inThread || String(root.active.chat) !== root.pasteChat) return
         try {
           var d = JSON.parse(text.trim())
-          if (d.kind === "image" || d.kind === "file") root.setDraft(String(d.path || ""))
+          if (d.kind === "image" || d.kind === "file") root.addAttachment(String(d.path || ""))
           else if (d.kind === "text") {
             composeField.insert(composeField.cursorPosition, String(d.text || ""))
           }
@@ -1703,18 +2010,33 @@ FocusScope {
           if (!ok) err = d.online === false ? "not sent — Mac unreachable" : String(d.error || err)
         } catch (e) { /* fall through */ }
         if (ok) {
-          // Only clear the draft this send actually shipped — the user may
-          // have queued a NEWER file while this one was in flight.
-          if (root.draftPath === root.sendDraftPath) root.clearDraft()
+          // Retire only the part that actually shipped — the user may have
+          // queued another file while this one was in flight.
+          root.removeAttachment(root.sendDraftPath)
+          root.sendDraftPath = ""
+          root.reloadChat = root.sendChat
+          reloadTimer.restart()
+          if (root.fileQueue.length > 0) {
+            // More parts to go: keep sendChat/sendText, do NOT clear the
+            // field or hand focus back mid-batch.
+            root.pumpFileSend()
+            return
+          }
           if (belongsHere) {
             root.note = ""
             if (composeField.text === root.sendText) composeField.text = ""
           }
-          root.reloadChat = root.sendChat
-          reloadTimer.restart()
         } else if (belongsHere) {
-          root.note = err
+          // Stop the batch: the parts still queued stay attached, so the user
+          // can retry them rather than hunt for which of five went out.
+          var left = root.fileQueue.length
+          root.note = left > 0 ? err + " — " + (left + 1) + " still attached" : err
+          root.fileQueue = []
+          root.sendDraftPath = ""
         }
+        root.fileQueue = []
+        root.sendCaption = ""
+        root.sendService = ""
         root.sendChat = ""
         root.sendText = ""
         if (belongsHere) composeField.forceActiveFocus()
@@ -1981,6 +2303,12 @@ FocusScope {
       openThread(threads[i])
       return true
     }
+    if (text === "u" || text === "U") {
+      if (searching || newMode) return false
+      var t = threads[cursor]
+      if (t) markUnread(t)
+      return true
+    }
     if ((inThread && !splitView) || searching || newMode) return false
     if (text === "r" || text === "R") { if (hostWidget) hostWidget.refresh(true, false); return true }
     if (text === "a" || text === "A") { markAllRead(); return true }
@@ -1989,10 +2317,11 @@ FocusScope {
   function catchNavText(text) {
     if (contactReview.opened) return false
     var jump = text === "/" || text === "n" || text === "N"
+      || text === "u" || text === "U"
       || (text >= "1" && text <= "9")
     if (!jump) return false
     if (searchField.activeFocus || newField.activeFocus || bubbleFocused) return false
-    if (composeField.activeFocus && (composeField.text.length > 0 || root.draftPath !== ""))
+    if (composeField.activeFocus && (composeField.text.length > 0 || root.attachCount > 0))
       return false
     return handleTextKey(text) === true
   }
@@ -2132,12 +2461,16 @@ FocusScope {
           boundsBehavior: Flickable.StopAtBounds
           interactive: contentHeight > height
           ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+          onContentYChanged: root.growRowsForScroll()
 
-          // Wheel scrolling is DIRECT, 1:1 — no animation. Two animated
-          // schemes (restarted easing, SmoothedAnimation chase) both fought
-          // the MX Master's hi-res event flood and felt broken; hi-res
-          // wheels are smooth by HARDWARE, so applying each delta
-          // immediately is what a browser does and what reads as smooth.
+          // Wheel scrolling is DIRECT, 1:1 — no animation by default. Two
+          // animated schemes (restarted easing, SmoothedAnimation chase) both
+          // fought the MX Master's hi-res event flood and felt broken; hi-res
+          // wheels are smooth by HARDWARE, so applying each delta immediately
+          // is what a browser does. OPT-IN (`smooth_scroll=on`): a mouse-wheel
+          // notch glides (smoothWheel, WheelGlide), retargeted rather than
+          // restarted, so a flood of notches accumulates instead of fighting
+          // itself. Touchpad pixel deltas are never animated.
           // The handler owns the event outright so the Flickable's own
           // wheel path can never double-apply it.
           // MouseArea.onWheel, NOT WheelHandler: instrumentation proved the
@@ -2151,9 +2484,10 @@ FocusScope {
             z: -1
             acceptedButtons: Qt.NoButton
             onWheel: function(wheel) {
-              var d = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y * 3.0 : wheel.angleDelta.y * 4.5
+              var d = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y * root.touchpadMultiplier : wheel.angleDelta.y * root.wheelMultiplier
               var max = Math.max(0, threadFlick.contentHeight - threadFlick.height)
-              threadFlick.contentY = Math.max(0, Math.min(max, threadFlick.contentY - d))
+              if (wheel.pixelDelta.y === 0 && root.smoothWheel) threadGlide.by(-d)
+              else threadFlick.contentY = Math.max(0, Math.min(max, threadFlick.contentY - d))
               wheel.accepted = true
             }
           }
@@ -2203,11 +2537,8 @@ FocusScope {
                 foreground: root.foreground
                 fontFamily: root.fontFamily
               }
-              // Local only: moves readMark/readMarks in state.json so the
-              // badge and dots clear. Nothing is written back to the Mac —
-              // AppleScript cannot flip is_read (see "not possible" in CLAUDE.md).
-              // TapHandler, not MouseArea: the thread rows' proven pattern —
-              // the MouseArea version could lose clicks to the dismiss layer.
+              // Clear local marks and, unless push_read=off, ask Messages
+              // on the Mac to mark its conversations read too.
               Text {
                 id: markAllBtn
                 visible: root.unread > 0 && !root.searchShowing && !root.newMode
@@ -2572,7 +2903,7 @@ FocusScope {
                       font.bold: true
                     }
                     Text {
-                      text: String(modelData.ts || "").slice(0, 16)
+                      text: root.fmtTime(modelData.ts)
                       textFormat: Text.PlainText
                       color: root.dim
                       font.family: root.fontFamily
@@ -2615,13 +2946,19 @@ FocusScope {
               spacing: 0
               Repeater {
                 id: chronologicalRepeater
-                model: root.online && root.listShowing && !root.searchShowing && !root.newMode ? root.unpinnedThreads : []
+                model: root.online && root.listShowing && !root.searchShowing && !root.newMode ? root.rowsBuilt : 0
                 delegate: Rectangle {
                   id: threadRow
-                  required property var modelData
                   required property int index
+                  // The count and the array change in either order; a row that
+                  // is briefly past the end of the list renders as nothing
+                  // rather than throwing on every binding it has.
+                  readonly property var modelData: root.unpinnedThreads[index] || root.absentThread
                   readonly property bool highlighted: rowHover.hovered || (hasCursor && root.cursorShown)
-                  readonly property bool hasCursor: root.cursorChat === String(modelData.chat)
+                  // cursorChat is "" when there is no cursor, which is also an
+                  // absent row's chat — without the first test a placeholder
+                  // would light up and claim cursorRow.
+                  readonly property bool hasCursor: root.cursorChat !== "" && root.cursorChat === String(modelData.chat)
                   onHasCursorChanged: if (hasCursor) root.cursorRow = threadRow
 
                   Layout.fillWidth: true
@@ -2909,11 +3246,14 @@ FocusScope {
             Qt.callLater(root.pushReload)
           }
 
-          // Wheel scrolling is DIRECT, 1:1 — no animation. Two animated
-          // schemes (restarted easing, SmoothedAnimation chase) both fought
-          // the MX Master's hi-res event flood and felt broken; hi-res
-          // wheels are smooth by HARDWARE, so applying each delta
-          // immediately is what a browser does and what reads as smooth.
+          // Wheel scrolling is DIRECT, 1:1 — no animation by default. Two
+          // animated schemes (restarted easing, SmoothedAnimation chase) both
+          // fought the MX Master's hi-res event flood and felt broken; hi-res
+          // wheels are smooth by HARDWARE, so applying each delta immediately
+          // is what a browser does. OPT-IN (`smooth_scroll=on`): a mouse-wheel
+          // notch glides (smoothWheel, WheelGlide), retargeted rather than
+          // restarted, so a flood of notches accumulates instead of fighting
+          // itself. Touchpad pixel deltas are never animated.
           // The handler owns the event outright so the Flickable's own
           // wheel path can never double-apply it.
           // MouseArea.onWheel, NOT WheelHandler: instrumentation proved the
@@ -2927,10 +3267,11 @@ FocusScope {
             z: -1
             acceptedButtons: Qt.NoButton
             onWheel: function(wheel) {
-              var d = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y * 3.0 : wheel.angleDelta.y * 4.5
+              var d = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y * root.touchpadMultiplier : wheel.angleDelta.y * root.wheelMultiplier
               // the wheel bypasses Flickable movement signals — the helper
               // maintains the bottom-stick too
-              root.scrollConversation(-d)
+              if (wheel.pixelDelta.y === 0 && root.smoothWheel) root.glideConversation(-d)
+              else root.scrollConversation(-d)
               wheel.accepted = true
             }
           }
@@ -2973,6 +3314,8 @@ FocusScope {
                 required property int index
                 readonly property bool mine: modelData.from_me === true
                 readonly property bool hasCursor: root.bubbleCursor === index
+                // with a tapback on its way drawn in (tapback-actions.ts)
+                readonly property var shownTapbacks: TapbackActions.shownTapbacks(modelData, root.pendingTapback)
                 onHasCursorChanged: if (hasCursor) root.bubbleCursorItem = bubbleRow
 
                 Layout.fillWidth: true
@@ -3087,7 +3430,7 @@ FocusScope {
                       if (d === 0 || flick.stick || root.pinToBottom) return
                       var yc = chipRow.mapToItem(content, 0, 0).y
                       if (yc < flick.contentY)
-                        flick.contentY = Math.max(0, flick.contentY + d)
+                        convGlide.shift(d)
                     }
                     readonly property string attId: String(modelData.id || "")
                     // the pill lands here when the message has no text bubble to carry it
@@ -3106,11 +3449,22 @@ FocusScope {
                     spacing: 0
                     Item { Layout.fillWidth: true; visible: bubbleRow.mine }
 
-                    // fetched image renders inline, like Messages; click = full view
-                    Image {
+                    // fetched image renders inline, like Messages; click = full view.
+                    // A GIF has to MOVE, and Image paints frame one and stops,
+                    // so animated formats go through AnimatedImage instead.
+                    // Static formats stay on Image: it is the one that applies
+                    // autoTransform, the EXIF fall-back for anything cached
+                    // before fetch.ts started baking orientation in. Sizing is
+                    // computed ONCE here so the two can never disagree — a
+                    // delegate whose implicit width outgrows the panel takes
+                    // every right-aligned element off-screen with it.
+                    Item {
                       id: attImage
                       TapbackPill { visible: chipRow.pillHere; mine: bubbleRow.mine; tapbacks: bubbleRow.modelData.tapbacks }
                       visible: chipRow.showImage
+                      readonly property bool animated: root.isAnimatedMime(chipRow.modelData.mime)
+                      readonly property var view: animated ? attAnimated : attStill
+                      readonly property int status: view.status
                       readonly property real maxW: Math.round(content.width * 0.6)
                       // Retina PNGs carry their density in the header (read by
                       // fetch.ts); divide it out so a 2x screenshot draws at
@@ -3121,35 +3475,64 @@ FocusScope {
                       readonly property real naturalWidth:
                         Number(chipRow.imageMetrics.pixelWidth || 0) > 0
                           ? Number(chipRow.imageMetrics.pixelWidth) / pixelRatio
-                          : implicitWidth
+                          : view.implicitWidth
                       readonly property real naturalHeight:
                         Number(chipRow.imageMetrics.pixelHeight || 0) > 0
                           ? Number(chipRow.imageMetrics.pixelHeight) / pixelRatio
-                          : implicitHeight
-                      source: chipRow.showImage ? chipRow.fileUrl : ""
-                      asynchronous: true
-                      fillMode: Image.PreserveAspectFit
-                      // iPhone photos store rotation as an EXIF tag, not in
-                      // the pixels (sips keeps the tag when it converts HEIC);
-                      // Qt ignores it unless asked, so portraits came out on
-                      // their side. implicitWidth/Height follow the transform.
-                      autoTransform: true
-                      // bound the DECODE in BOTH axes, not just the paint — a
-                      // 12MP photo (or a 100×100000 sliver) must not cost
-                      // 50 MB of texture (Codex review points 19 and #3)
-                      sourceSize.width: 800
-                      sourceSize.height: 800
-                      // LRU eviction or a corrupt file: fall back to the chip
-                      // (⚠ marker); a click re-fetches through fetch.ts.
-                      onStatusChanged: if (status === Image.Error) {
-                        var m = Object.assign({}, root.attFiles)
-                        m[chipRow.attId] = ""
-                        root.attFiles = m
-                      }
+                          : view.implicitHeight
+
                       Layout.preferredWidth: status === Image.Ready ? Math.min(maxW, naturalWidth) : maxW
                       Layout.preferredHeight: status === Image.Ready && naturalWidth > 0
                         ? Layout.preferredWidth * naturalHeight / naturalWidth
                         : Style.space(120)
+
+                      // LRU eviction or a corrupt file: fall back to the chip
+                      // (⚠ marker); a click re-fetches through fetch.ts.
+                      function forget() {
+                        var m = Object.assign({}, root.attFiles)
+                        m[chipRow.attId] = ""
+                        root.attFiles = m
+                      }
+
+                      Image {
+                        id: attStill
+                        anchors.fill: parent
+                        visible: !attImage.animated
+                        // Only the ACTIVE renderer loads: two sources would
+                        // decode every photo twice.
+                        source: chipRow.showImage && !attImage.animated ? chipRow.fileUrl : ""
+                        asynchronous: true
+                        fillMode: Image.PreserveAspectFit
+                        // iPhone photos store rotation as an EXIF tag, not in
+                        // the pixels (sips keeps the tag when it converts HEIC);
+                        // Qt ignores it unless asked, so portraits came out on
+                        // their side. implicitWidth/Height follow the transform.
+                        autoTransform: true
+                        // bound the DECODE in BOTH axes, not just the paint — a
+                        // 12MP photo (or a 100×100000 sliver) must not cost
+                        // 50 MB of texture (Codex review points 19 and #3)
+                        sourceSize.width: 800
+                        sourceSize.height: 800
+                        onStatusChanged: if (status === Image.Error) attImage.forget()
+                      }
+
+                      AnimatedImage {
+                        id: attAnimated
+                        anchors.fill: parent
+                        visible: attImage.animated
+                        source: chipRow.showImage && attImage.animated ? chipRow.fileUrl : ""
+                        asynchronous: true
+                        fillMode: Image.PreserveAspectFit
+                        // AnimatedImage honours sourceSize (measured), so the
+                        // same decode ceiling applies to a huge GIF.
+                        sourceSize.width: 800
+                        sourceSize.height: 800
+                        // Nothing animates off-screen: a thread full of GIFs
+                        // would otherwise decode frames nobody is looking at.
+                        playing: visible && root.inThread
+                        onStatusChanged: if (status === Image.Error) attImage.forget()
+                      }
+
                       HoverHandler { cursorShape: Qt.PointingHandCursor }
                       TapHandler { onTapped: root.openAttachment(chipRow.modelData) }
                     }
@@ -3208,7 +3591,7 @@ FocusScope {
                     if (d === 0 || flick.stick || root.pinToBottom) return
                     var yc = linkRow.mapToItem(content, 0, 0).y
                     if (yc < flick.contentY)
-                      flick.contentY = Math.max(0, flick.contentY + d)
+                      convGlide.shift(d)
                   }
                   Item { Layout.fillWidth: true; visible: bubbleRow.mine }
                   Rectangle {
@@ -3289,7 +3672,7 @@ FocusScope {
                     }
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                     TapHandler { onTapped: root.openLink(String(linkCard.link.url || "")) }
-                    TapHandler { acceptedButtons: Qt.RightButton; onTapped: root.openShare(String(linkCard.link.url || "")) }
+                    TapHandler { acceptedButtons: Qt.RightButton; onTapped: root.openMessageMenu(modelData, String(linkCard.link.url || "")) }
                   }
                   Item { Layout.fillWidth: true; visible: !bubbleRow.mine }
                 }
@@ -3301,7 +3684,7 @@ FocusScope {
                   Layout.fillWidth: true
                   // a tapback pill overlaps the top edge — leave room for it
                   Layout.topMargin: (modelData.groupStart ? Style.space(6) : 0)
-                                    + ((modelData.tapbacks || []).length > 0 ? Style.space(12) : 0)
+                                    + (bubbleRow.shownTapbacks.length > 0 ? Style.space(12) : 0)
                   visible: !modelData.retracted &&
                            (String(modelData.text || "") !== "" || (modelData.attachments || []).length === 0) &&
                            // a message that is ONLY the URL shows just the card,
@@ -3382,18 +3765,17 @@ FocusScope {
                       }
                     }
 
-                    // right-click on a LINK = share sheet; anywhere else = copy the whole message
+                    // Right-click offers message actions or actions for the clicked link.
                     TapHandler {
                       acceptedButtons: Qt.RightButton
                       onTapped: function(eventPoint) {
                         var p = bubbleText.mapFromItem(bubble, eventPoint.position.x, eventPoint.position.y)
                         var l = bubbleText.hasLink ? bubbleText.linkAt(p.x, p.y) : ""
-                        if (l && l !== "") root.openShare(String(l))
-                        else root.copyText(String(modelData.text || ""))
+                        root.openMessageMenu(modelData, String(l || ""))
                       }
                     }
 
-                    TapbackPill { mine: bubbleRow.mine; tapbacks: modelData.tapbacks }
+                    TapbackPill { mine: bubbleRow.mine; tapbacks: bubbleRow.shownTapbacks }
                   }
 
                   Item { Layout.fillWidth: true; visible: !bubbleRow.mine }
@@ -3405,7 +3787,8 @@ FocusScope {
                   Layout.fillWidth: true
                   visible: String(modelData.time || "") !== "" ||
                            modelData.edited === true || String(modelData.effect || "") !== "" ||
-                           modelData.failed === true || modelData.pending === true
+                           modelData.failed === true || modelData.pending === true ||
+                           modelData.scheduled === true
                   spacing: 0
                   Item { Layout.fillWidth: true; visible: bubbleRow.mine }
                   Text {
@@ -3415,7 +3798,9 @@ FocusScope {
                     wrapMode: Text.WrapAnywhere
                     text: [modelData.failed === true ? "⚠ Not Delivered" : "",
                            modelData.failed === true ? String(modelData.failureReason || "")
-                             : modelData.pending === true ? "Sending…" : String(modelData.time || ""),
+                             : modelData.pending === true ? "Sending…"
+                             : modelData.scheduled === true ? "Scheduled for " + String(modelData.scheduledFor || "")
+                             : String(modelData.time || ""),
                            modelData.edited === true ? "Edited" : "",
                            String(modelData.effect || "") !== "" ? "sent with " + modelData.effect : ""]
                           .filter(function(s) { return s !== "" }).join(" · ")
@@ -3470,32 +3855,47 @@ FocusScope {
           foreground: root.foreground
         }
 
-        // queued attachment — one per message; ✕ removes it
-        RowLayout {
+        // queued attachments — ✕ removes one. ONE CHIP PER ROW, never a
+        // RowLayout of N: summed implicit widths stretch the whole column
+        // past the panel and take every right-aligned element off-screen
+        // with it (CLAUDE.md; the same rule the received chips follow).
+        ColumnLayout {
+          id: attachList
           Layout.fillWidth: true
-          visible: root.inThread && root.draftPath !== ""
-          spacing: 0
-          Rectangle {
-            Layout.preferredWidth: Math.ceil(draftText.implicitWidth) + Style.space(18)
-            Layout.preferredHeight: Math.ceil(draftText.implicitHeight) + Style.space(12)
-            radius: Style.space(14)
-            color: root.mineFill
-            opacity: 0.9
-            Text {
-              id: draftText
-              anchors.centerIn: parent
-              text: "📎 " + (root.draftLabel.length > 40
-                              ? root.draftLabel.slice(0, 37) + "…"
-                              : root.draftLabel) + "   ✕"
-              textFormat: Text.PlainText
-              color: root.mineText
-              font.family: root.fontFamily
-              font.pixelSize: root.fontCaption
+          visible: root.inThread && root.attachCount > 0
+          spacing: Style.space(4)
+          Repeater {
+            model: root.attachDrafts
+            delegate: RowLayout {
+              required property var modelData
+              Layout.fillWidth: true
+              spacing: 0
+              Rectangle {
+                // Capped at the compose column: a long filename must not
+                // push the row wider than the panel.
+                Layout.preferredWidth: Math.min(
+                  Math.ceil(attachChipText.implicitWidth) + Style.space(18),
+                  attachList.width)
+                Layout.preferredHeight: Math.ceil(attachChipText.implicitHeight) + Style.space(12)
+                radius: Style.space(14)
+                color: root.mineFill
+                opacity: 0.9
+                Text {
+                  id: attachChipText
+                  anchors.centerIn: parent
+                  readonly property string label: String(modelData.label || "file")
+                  text: "📎 " + (label.length > 40 ? label.slice(0, 37) + "…" : label) + "   ✕"
+                  textFormat: Text.PlainText
+                  color: root.mineText
+                  font.family: root.fontFamily
+                  font.pixelSize: root.fontCaption
+                }
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: root.removeAttachment(modelData.path) }
+              }
+              Item { Layout.fillWidth: true }
             }
-            HoverHandler { cursorShape: Qt.PointingHandCursor }
-            TapHandler { onTapped: root.clearDraft() }
           }
-          Item { Layout.fillWidth: true }
         }
 
         RowLayout {
@@ -3599,7 +3999,7 @@ FocusScope {
                 // instead; send() is the authoritative online/sendability guard.
                 enabled: true
                 readOnly: !root.online || !root.isSendable(root.active)
-                placeholderText: root.draftPath !== ""
+                placeholderText: root.attachCount > 0
                   ? "caption (optional) — Enter sends the file"
                   : root.isSendable(root.active) ? "iMessage" : "Read-only — group id unknown"
                 color: root.foreground
@@ -3640,10 +4040,10 @@ FocusScope {
                   }
                   var empty = text.length === 0
                   // Ordinary editing keys belong to the draft, including at
-                  // its boundaries. History selection uses Page Up/Page Down.
+                  // its boundaries. History selection uses Page Up/Page Down,
+                  // and these leave it alone, as typing does.
                   if (event.key === Qt.Key_Up || event.key === Qt.Key_Down
                       || event.key === Qt.Key_Home || event.key === Qt.Key_End) {
-                    root.clearBubbleCursor()
                     event.accepted = composeField.moveAtBoundary(event.key, event.modifiers)
                     return
                   }
@@ -3658,11 +4058,12 @@ FocusScope {
                   }
                   // Actions on the selected bubble. Enter is free here: with no
                   // text and no queued file, send() would do nothing anyway.
-                  var b = empty && root.draftPath === "" ? root.selectedBubble() : null
+                  var b = empty && root.attachCount === 0 ? root.selectedBubble() : null
                   if (b) {
                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { event.accepted = true; root.openBubble(b); return }
                     if (event.matches(StandardKey.Copy)) { event.accepted = true; root.copyBubble(b); return }
                     if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) { event.accepted = true; root.quoteBubble(b); return }
+                    if (event.key === Qt.Key_E && (event.modifiers & Qt.ControlModifier)) { event.accepted = true; root.openMessageMenuAt(b, root.bubbleCursorItem); return }
                   }
                   if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                       && !(event.modifiers & Qt.ShiftModifier)) {
@@ -3677,7 +4078,7 @@ FocusScope {
           // send button — the blue arrow circle (lit when text OR a file is queued)
           Rectangle {
             Layout.alignment: Qt.AlignBottom
-            readonly property bool armed: composeField.text.trim() !== "" || root.draftPath !== ""
+            readonly property bool armed: composeField.text.trim() !== "" || root.attachCount > 0
             width: Style.space(28); height: width; radius: width / 2
             color: armed ? root.mineFill : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
             Text {
@@ -3711,12 +4112,117 @@ FocusScope {
     }
   }
 
+  property var messageContext: null
+  function openMessageMenu(message, url) {
+    messageContext = message
+    messageMenu.linkUrl = url
+    messageMenu.keyHints = false
+    messageMenu.popup()
+  }
+  /** Ctrl+E on the selected bubble: the same menu, under the bubble, with the
+   *  tapbacks' number keys shown. Closing it hands the keys back to the draft. */
+  function openMessageMenuAt(message, item) {
+    messageContext = message
+    messageMenu.linkUrl = ""
+    messageMenu.keyHints = true
+    // placed under the bubble but parented to the view: a reload rebuilds the
+    // bubble's row, and a menu parented to it would close with it
+    if (item) {
+      var at = item.mapToItem(root, Math.max(0, (item.width - messageMenu.implicitWidth) / 2), item.height)
+      messageMenu.popup(root, at.x, at.y)
+    } else messageMenu.popup()
+  }
+
+  // ---- outgoing tapbacks: tapbacks=on in bridge.conf, the Mac's imsg-react
+  // (#69). The tool decides from chat.db and verifies there. The choice is
+  // drawn at once, dimmed, as pendingTapback, until a thread load shows what
+  // chat.db says; a failure takes it away and is said once on the status line.
+  // One at a time: the menu's row is busy until then.
+  readonly property bool tapbacksOn: hostWidget ? hostWidget.tapbacks === true : false
+  property var pendingTapback: null
+  /** A failure in a conversation you had left: { chat, text }, shown when it is opened again. */
+  property var tapbackNote: null
+  function tapbackFailed(chat, text) {
+    root.pendingTapback = null
+    if (root.active && String(root.active.chat) === chat) root.note = text
+    else root.tapbackNote = { chat: chat, text: text }
+  }
+  readonly property bool tapbacksBusy: reactProc.running || pendingTapback !== null
+  function sendTapback(message, kind) {
+    if (root.tapbacksBusy || !root.tapbacksOn || !TapbackActions.canTapback(message, root.activeIsGroup)) return
+    reactProc.chat = String(root.active.chat)
+    var current = TapbackActions.myTapback(message)
+    root.pendingTapback = TapbackActions.pendingTapback(reactProc.chat, String(message.guid), kind, current)
+    reactProc.lastErr = ""
+    reactProc.command = SourceId.bridgeArgv(reactProc.chat, "imsg-react", hostWidget ? hostWidget.binDir : root.home + "/bin")
+      .concat(TapbackActions.tapbackArgs(String(message.guid), kind, current))
+    // the dimmed pill says it is on its way; an earlier failure is old news
+    if (root.note.indexOf("tapback: ") === 0) root.note = ""
+    root.tapbackNote = null
+    reactProc.running = true
+  }
+  MessageMenu {
+    id: messageMenu
+    objectName: "blipMessageMenu"
+    font.family: root.fontFamily
+    font.pixelSize: root.fontBodySmall
+    palette.window: Color.background
+    palette.base: Color.background
+    palette.text: root.foreground
+    palette.windowText: root.foreground
+    palette.buttonText: root.foreground
+    palette.highlight: root.accent
+    palette.highlightedText: "#ffffff"
+    canQuote: root.messageContext !== null && MessageActions.quoteText(root.messageContext) !== ""
+              && root.online && root.isSendable(root.active)
+    canCopy: root.messageContext !== null && String(root.messageContext.text || "") !== ""
+    onQuoteRequested: if (root.messageContext) root.quoteBubble(root.messageContext)
+    onCopyRequested: if (root.messageContext) root.copyBubble(root.messageContext)
+    onOpenRequested: function(url) { root.openLink(url) }
+    onCopyLinkRequested: function(url) { root.copyText(url) }
+    onShareRequested: function(url) { root.openShare(url) }
+    tapbacksShown: root.tapbacksOn && TapbackActions.canTapback(root.messageContext, root.activeIsGroup)
+    tapbacksBusy: root.tapbacksBusy
+    myTapback: TapbackActions.myTapback(root.messageContext)
+    onTapbackRequested: function(kind) { if (root.messageContext) root.sendTapback(root.messageContext, kind) }
+    onClosed: {
+      root.messageContext = null
+      if (keyHints) composeField.forceActiveFocus()
+    }
+  }
+
   property var contactContext: null
+  function isDmChat(t) {
+    var c = t ? String(t.chat || "") : ""
+    return /^\+?[0-9]{3,15}$/.test(c) || c.indexOf("@") > 0
+  }
+  function menuIcon(name) { return Qt.resolvedUrl("icons/" + name + ".svg") }
   Menu {
     id: contactMenu
+    width: 240
     MenuItem {
       text: "Review contact"
       onTriggered: if (root.contactContext) contactReview.review(root.contactContext)
+    }
+    MenuItem {
+      visible: !(root.contactContext && Number(root.contactContext.unread || 0) > 0)
+      height: visible ? implicitHeight : 0
+      text: "Mark as Unread"
+      icon.source: root.menuIcon("unread")
+      enabled: root.isDmChat(root.contactContext)
+      onTriggered: if (root.contactContext) root.markUnread(root.contactContext)
+    }
+    MenuItem {
+      visible: root.contactContext && Number(root.contactContext.unread || 0) > 0
+      height: visible ? implicitHeight : 0
+      text: "Mark as Read"
+      icon.source: root.menuIcon("read")
+      onTriggered: {
+        var t = root.contactContext
+        if (!t) return
+        root.peeking = false
+        root.markRead(String(t.chat), String(t.last_ts || ""), root.isDmChat(t) ? "read" : "")
+      }
     }
   }
   ContactReview {
@@ -3730,6 +4236,7 @@ FocusScope {
     fontSize: root.fontBodySmall
     onClosed: root.focusDefault()
     onCopyRequested: function(text) { root.copyText(text) }
+    onContactSaved: if (root.hostWidget) root.hostWidget.refresh(true)
   }
 
   // Copy feedback must remain visible above contact review and other subviews.
@@ -3764,9 +4271,16 @@ FocusScope {
       keys: ["text/uri-list"]
       onDropped: (drop) => {
         if (!drop.hasUrls || drop.urls.length === 0) return
-        var u = String(drop.urls[0])
-        if (u.indexOf("file://") !== 0) return
-        root.setDraft(decodeURIComponent(u.replace(/^file:\/\//, "")))
+        // EVERY dropped file, not just urls[0]: dropping five photos used to
+        // attach one and discard four without saying so.
+        var paths = []
+        for (var i = 0; i < drop.urls.length; i++) {
+          var u = String(drop.urls[i])
+          if (u.indexOf("file://") !== 0) continue
+          paths.push(decodeURIComponent(u.replace(/^file:\/\//, "")))
+        }
+        if (paths.length === 0) return
+        root.addAttachments(paths)
         drop.accept()
       }
     }
