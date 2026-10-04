@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import functools
+import hashlib
 import html
 import io
 import json
@@ -554,6 +555,9 @@ def _forget_contacts() -> None:
     _EXACT_SEEN.clear()
     _NAME_CACHE.clear()
     _SHORT_NAMES.clear()
+    # The region a country-code-less card is read in: memoised for the life of
+    # the process, which on the serve channel outlives a change of region.
+    _home_calling_code.cache_clear()
 
 
 def label(handle: str | None, is_from_me: int, with_names: bool) -> str:
@@ -1707,36 +1711,81 @@ _PINS_CACHE: tuple | None = None
 
 
 def _chat_table_generation(con) -> tuple:
-    """Cheap fingerprint of the chat table. Group clusters change only when a
-    chat row is added or re-keyed, never when a message lands."""
-    row = con.execute("SELECT COUNT(*), COALESCE(MAX(ROWID), 0) FROM chat").fetchone()
-    return (row[0], row[1])
+    """Fingerprint of everything _group_cluster_map_uncached reads.
+
+    The cluster key is (name, sorted member handles) for groups and group_id
+    for merged DMs, and the canonical alias is the row with the newest message.
+    So the fingerprint covers the chat rows' identity, style, group_id and
+    display_name; the membership joins with the handles they name; the newest
+    message (a new message can move the canonical alias, and a rename message
+    supplies a blank group's name); and Recently Deleted, whose moves change a
+    chat's newest VISIBLE message without adding a row. (count, max ROWID) of
+    the chat table alone kept a cluster cached after a group_id update.
+
+    Every query reads committed WAL pages (mode=ro, not immutable), so a change
+    Messages has not checkpointed yet still moves the fingerprint. It moves on
+    every new message, which is the price of an exact canonical alias: a poll
+    with nothing new still hits the cache, the first request after a message
+    recomputes once, and the rest of that burst hit again.
+    """
+    h = hashlib.blake2b(digest_size=16)
+    for sql in (
+        "SELECT ROWID, chat_identifier, style, group_id, display_name FROM chat ORDER BY ROWID",
+        "SELECT j.chat_id, h.id FROM chat_handle_join j JOIN handle h ON h.ROWID = j.handle_id "
+        "ORDER BY j.chat_id, h.id",
+    ):
+        for row in con.execute(sql):
+            h.update(repr(tuple(row)).encode("utf-8", "surrogatepass"))
+            h.update(b"\x00")
+        h.update(b"\x01")
+    newest = con.execute("SELECT COALESCE(MAX(ROWID), 0) FROM message").fetchone()[0]
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                   "AND name='chat_recoverable_message_join'").fetchone():
+        # A deletion moves the row here; its (count, sum, max) moves with it.
+        deleted = tuple(con.execute(
+            "SELECT COUNT(*), COALESCE(SUM(message_id), 0), COALESCE(MAX(message_id), 0) "
+            "FROM chat_recoverable_message_join").fetchone())
+    else:
+        # macOS 12 and earlier delete the join row outright: count those.
+        deleted = (con.execute("SELECT COUNT(*) FROM chat_message_join").fetchone()[0],)
+    return (h.hexdigest(), newest, deleted)
+
+
+def _file_generation(path: str) -> tuple:
+    """(inode, mtime, size) of a file, zeros when it is absent. The inode is
+    there because an atomic replace can land inside one mtime tick."""
+    try:
+        st = os.stat(path)
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (0, 0, 0)
+
+
+def _sqlite_generation(path: str) -> tuple:
+    """A SQLite file AND its write-ahead log. A commit lands in -wal and the
+    base file does not change until a checkpoint, so stat()ing the base alone
+    missed every edit made since the last one."""
+    return (_file_generation(path), _file_generation(path + "-wal"))
 
 
 def _pins_generation() -> tuple:
     """Pins live in a plist Messages rewrites when you pin or unpin."""
-    out = []
-    for path in PINNING_PLIST_PATHS:
-        try:
-            st = os.stat(path)
-            out.append((st.st_mtime_ns, st.st_size))
-        except OSError:
-            out.append((0, 0))
-    return tuple(out)
+    return tuple(_file_generation(path) for path in PINNING_PLIST_PATHS)
 
 
 def _contacts_generation() -> tuple:
-    """The address books, so an edit in Contacts.app is seen by a channel that
-    outlives it. One-shot runs rebuilt the index every time and never needed
-    this; serve would have gone on answering with the names it started with."""
-    out = []
-    for path in _ab_sources():
-        try:
-            st = os.stat(path)
-            out.append((st.st_mtime_ns, st.st_size))
-        except OSError:
-            out.append((0, 0))
-    return tuple(out)
+    """Everything the Contacts index derives from, so an edit in Contacts.app
+    is seen by a channel that outlives it. One-shot runs rebuilt the index
+    every time and never needed this.
+
+    That is more than the address books: which sources count and in what order
+    comes from Accounts4.sqlite (ranks, child-delegate mirrors) and from each
+    book's record count, and a number saved without a country code takes the
+    Mac's region from the global preferences. Every SQLite file is fingerprinted
+    with its WAL, and nothing here opens a database — stat() only, per request.
+    """
+    books = tuple((p, _sqlite_generation(p)) for p in sorted(glob(_AB_GLOB)))
+    return (books, _sqlite_generation(_ACCOUNTS_DB), _file_generation(_GLOBAL_PREFS))
 
 
 def _group_cluster_map(con) -> dict:

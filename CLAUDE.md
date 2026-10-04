@@ -497,10 +497,14 @@ what it is handed. Keep it that way.
   because the matching rules have been got wrong twice before.
   **Caches invalidate on what they DERIVE from, never on chat.db's mtime**,
   which changes on every message and would cache nothing during exactly the
-  busy minute that matters: group clusters key on the chat table's
-  (count, max ROWID), pins on the pinning plist's mtime, and the Contacts
-  index on the address books' — the last one exists because the serve channel
-  outlives an edit in Contacts.app, where a one-shot run always rebuilt.
+  busy minute that matters: group clusters key on a fingerprint of the chat
+  rows (identity, style, group_id, name), the membership joins, the newest
+  message ROWID and Recently Deleted (a new message can move the canonical
+  alias); pins on the pinning plist; and the Contacts index on every address
+  book, Accounts4.sqlite and the global preferences, each SQLite file WITH its
+  -wal (a commit sits there until a checkpoint). The last one exists because
+  the serve channel outlives an edit in Contacts.app, where a one-shot run
+  always rebuilt.
 
 ## Working on it
 
