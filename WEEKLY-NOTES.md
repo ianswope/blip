@@ -27,7 +27,33 @@ reconstructed on Sunday from memory.
 
 ## 2026-W40 (Mon 28 Sep to Sun 4 Oct): OPEN, post due Sun 4 Oct
 
-9 PRs merged so far, from 6 people.
+13 PRs merged so far, from 7 people (#131 cherry-picked).
+
+### Sun 4 Oct: #127, #122, #83 merged; #131's Mac fix taken
+
+All four were one-way doors (they change the Mac bridge or CI), which is
+why they sat open: that rule means Fred reads the diff before merge, and
+no session waives it. Fred approved each on 4 Oct.
+
+- **#127 tapbacks can't land on the neighbouring message.** Erik
+  Fillipsveen (github.com/Fileri). Testing #116 on macOS 26.6 he got a
+  heart on the wrong message twice: scrolling renumbers transcript rows
+  between the scroll and the press. Now a pass that scrolls never presses,
+  label and frame are read in one event, no retry, stray check always.
+  Tapbacks stay off on Fred's machines.
+- **#122 Pin and Hide Alerts in the conversation menu.** Damon Janis
+  (https://x.com/damonjanis). Through Messages' own menu, verified over the
+  whole conversation cluster; the four review fixes were added on top by
+  another Larry session. Completes the #120/#121/#122 series.
+- **#83 a warm channel to the Mac.** Zach Wilke
+  (https://x.com/zachwilke_1). A helper keeps the ssh link open: a poll
+  query took a median 18 ms against 166 ms one-shot on gus, measured live.
+  Killing the link on purpose: queries fell back with no errors and the bar
+  restarted the helper within 30 s. Real Wi-Fi loss not tested.
+- **#131 a send now waits for the Automation prompt.** David Benedic
+  (github.com/daveyb, new contributor; X asked). imsg-send gave up after
+  15 s, shorter than the Allow prompt; now 150 s. His Windows tray client
+  was declined for this repo with an offer to link it as its own project.
 
 ### Sat 4 Oct: #128
 

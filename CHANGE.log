@@ -44,6 +44,14 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-04  #131 imsg-send waits 150 s for the Automation prompt (was 15 s). Cherry-picked; Windows tray declined for this repo.
+                 David Benedic, github.com/daveyb, X: none published (asked on the PR)
+2026-10-04  #83 blip-bridged keeps the Mac channel warm: 18 ms vs 166 ms per query on gus, self-heals in 30 s.
+                 Zach Wilke, github.com/zachwilke, X https://x.com/zachwilke_1
+2026-10-04  #122 Pin and Hide Alerts in the conversation menu, verified on the Mac. Damon Janis, github.com/damonjanis,
+                 X https://x.com/damonjanis
+2026-10-04  #127 imsg-react never presses in the pass that scrolled (wrong-message tapback fix). Erik Fillipsveen,
+                 github.com/Fileri, X: none found
 2026-10-04  #128 A monitor that sleeps off DisplayPort no longer crashes Hyprland a second way. With every output gone,
                  Hyprland reports its workspaces with no monitor, and moving the Blip window home onto one of them
                  segfaulted Hyprland 0.56 (null monitor in moveWindowToWorkspace, reproduced in a nested Hyprland).
