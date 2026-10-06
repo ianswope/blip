@@ -2540,9 +2540,12 @@ export function collect(deep: boolean, markRead = false, readChat = "", seenTs =
         : runReadAction([intent.unread ? "--unread" : "--chat", chat,
           ...(!intent.unread && intent.seen ? ["--through", intent.seen] : [])]);
       if (result.ok) delete pendingReads[chat];
-      else if (chat === "*" || intent.attempts >= 4) {
-        // --all cannot be bounded, so it is never retried. A per-chat push
-        // stops after five tries so Messages is not brought forward forever.
+      else if (chat === "*") {
+        // --all cannot be bounded, so it is never retried. Per-chat intents
+        // remain durable through an outage: dropping one resurrects the
+        // unread dot even though the user already read through intent.seen.
+        // Retries back off to once per minute, and both the
+        // snapshot and --through guard against consuming a newer inbound.
         delete pendingReads[chat];
         syncError = result.error || "read sync stopped";
       } else {
