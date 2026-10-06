@@ -261,6 +261,29 @@ def ensure_messages() -> str:
     return "Messages did not start"
 
 
+SCREEN_LOCKED = ("the Mac's screen is locked, so System Events can reach no window; unlock it, or set "
+                 "System Settings ▸ Lock Screen ▸ Start Screen Saver when inactive to Never "
+                 "(README, Keeping the Mac awake)")
+
+
+def screen_locked() -> bool:
+    """True while the console session sits behind the lock screen.
+
+    A locked screen hides every app's windows from System Events, so a
+    windowless Messages is far more often a locked Mac than a quit one: the
+    default screen saver (20 min) plus "require password after 5 minutes"
+    locks a gateway Mac 25 minutes after its owner last touched it, with
+    Messages open and healthy behind the lock. ioreg needs no TCC grant, and
+    the key exists only while locked."""
+    try:
+        r = subprocess.run(["ioreg", "-n", "Root", "-d1", "-a"], capture_output=True, timeout=10)
+        root = plistlib.loads(r.stdout) if r.returncode == 0 and r.stdout else {}
+    except Exception:
+        return False
+    users = root.get("IOConsoleUsers") if isinstance(root, dict) else None
+    return any(isinstance(u, dict) and bool(u.get("CGSSessionScreenIsLocked")) for u in users or [])
+
+
 def accessibility() -> str:
     """"" when System Events can drive Messages, else why not."""
     code, out = osa(f'tell application "System Events" to tell process "Messages" to name of {MENU}')
@@ -270,6 +293,8 @@ def accessibility() -> str:
         return ("Accessibility is not granted. System Settings ▸ Privacy & Security ▸ "
                 "Accessibility → add /usr/libexec/sshd-keygen-wrapper (the same entry "
                 "that has Full Disk Access).")
+    if screen_locked():
+        return SCREEN_LOCKED
     return out or "System Events could not reach Messages"
 
 
@@ -550,6 +575,10 @@ def select_chat(handle: str) -> str:
     subprocess.run(["sleep", "1.5"], capture_output=True)
     code, out = osa('tell application "System Events" to tell process "Messages" to count windows')
     if code != 0 or not out.isdecimal() or int(out) < 1:
+        # Zero windows with Messages running is what a locked screen looks
+        # like; say so, or the owner is sent to a Messages that is open and fine.
+        if screen_locked():
+            return SCREEN_LOCKED
         return "Messages has no accessible window; log in and open Messages on the Mac"
     return ""
 

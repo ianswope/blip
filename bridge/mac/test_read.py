@@ -81,6 +81,39 @@ class ReadTests(unittest.TestCase):
              patch.object(read, "osa", return_value=(0, "0")):
             self.assertIn("no accessible window", read.select_chat("chat12345"))
 
+    def test_windowless_messages_names_a_locked_screen(self):
+        with patch.object(read.subprocess, "run", return_value=CompletedProcess([], 0)), \
+             patch.object(read, "osa", return_value=(0, "0")), \
+             patch.object(read, "screen_locked", return_value=True):
+            self.assertIn("screen is locked", read.select_chat("chat12345"))
+
+    def test_accessibility_failure_names_the_lock_only_while_locked(self):
+        denied = "osascript is not allowed assistive access"
+        broken = "System Events got an error: Can't get window 1 of process \"Messages\"."
+        with patch.object(read, "screen_locked", return_value=True):
+            with patch.object(read, "osa", return_value=(1, broken)):
+                self.assertIn("screen is locked", read.accessibility())
+            with patch.object(read, "osa", return_value=(1, denied)):
+                self.assertIn("Accessibility is not granted", read.accessibility())
+        with patch.object(read, "screen_locked", return_value=False), \
+             patch.object(read, "osa", return_value=(1, broken)):
+            self.assertEqual(read.accessibility(), broken)
+
+    def test_screen_lock_is_read_from_the_console_session(self):
+        locked = plistlib.dumps({"IOConsoleUsers": [
+            {"kCGSSessionUserNameKey": "me", "kCGSSessionOnConsoleKey": True, "CGSSessionScreenIsLocked": True}]})
+        unlocked = plistlib.dumps({"IOConsoleUsers": [
+            {"kCGSSessionUserNameKey": "me", "kCGSSessionOnConsoleKey": True}]})
+        cases = [(locked, 0, True), (unlocked, 0, False), (locked, 1, False),
+                 (b"not a plist", 0, False), (b"", 0, False), (None, 0, False)]
+        for payload, code, want in cases:
+            with patch.object(read.subprocess, "run",
+                              return_value=CompletedProcess([], code, stdout=payload)) as run:
+                self.assertEqual(read.screen_locked(), want, (payload, code))
+                self.assertEqual(run.call_args[0][0][:2], ["ioreg", "-n"])
+        with patch.object(read.subprocess, "run", side_effect=OSError("no ioreg")):
+            self.assertFalse(read.screen_locked())
+
     def test_failed_url_dispatch_does_not_query_or_click_a_window(self):
         with patch.object(read.subprocess, "run", return_value=CompletedProcess([], 1)), \
              patch.object(read, "osa") as osa:
