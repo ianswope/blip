@@ -44,6 +44,8 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-07  #135 The documented deploy line copies icons/, so the conversation menu has its icons. Ian Swope,
+                 github.com/ianswope, X https://x.com/ianfs
 2026-10-06  #134 The sidebar keeps the open conversation selected in split view, independent of hover and the keyboard cursor.
                  Brandon Smith, github.com/bndnsmth, X: none published (asked on the PR)
 2026-10-06  #133 A read push survives a locked Mac (per-chat intents never dropped) and imsg-read says the screen is locked;

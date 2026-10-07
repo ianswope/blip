@@ -27,6 +27,13 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
+### Wed 7 Oct: #135
+
+- **#135 the deploy line copies the menu icons.** Ian Swope
+  (https://x.com/ianfs). The copy line in CLAUDE.md, AGENTS.md and
+  CONTRIBUTING.md left out icons/, so a by-the-book deploy showed the
+  conversation menu without icons. Docs only.
+
 ### Tue 6 Oct: #133, #134
 
 - **#133 a read survives a locked Mac.** Ian Swope (https://x.com/ianfs).
