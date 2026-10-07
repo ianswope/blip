@@ -44,6 +44,7 @@ Nobody right now.
 | joshhattan | joshhattan | 2 | nothing published; asked on the PR 2026-09-19 |
 | David Reinecke | dreinecke | 1 (+ issues) | nothing published, 2026-09-25 |
 | cw228 | cw228 | 1 | nothing published; asked on the PR 2026-09-18 |
+| Brandon Smith | bndnsmth | 1 | nothing published; asked on #134 2026-10-06 |
 | David Benedic | daveyb | 1 (cherry-picked) | nothing published; asked on #131 2026-10-04 |
 | "Unhook Dev" | tolewis | 1 | nothing published, 2026-09-25 |
 

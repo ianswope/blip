@@ -25,6 +25,23 @@ reconstructed on Sunday from memory.
 
 ---
 
+## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
+
+### Tue 6 Oct: #133, #134
+
+- **#133 a read survives a locked Mac.** Ian Swope (https://x.com/ianfs).
+  A gateway Mac's screen saver locks it about 25 minutes after last use;
+  Messages then has no reachable window, and after 5 failed tries the read
+  was dropped and the dot came back (441 attempts in one night on his Mac).
+  Per-chat reads now retry once a minute until the Mac confirms, and the
+  error names the lock. His test change also fixed 15 read-sync tests that
+  failed on any machine running the #83 warm channel.
+- **#134 the sidebar shows which chat is open.** Brandon Smith
+  (github.com/bndnsmth, new contributor; X asked). In the two-pane window
+  the highlight could sit on a different chat than the one shown. Verified
+  live on gus with a screenshot: the open chat's tile stays selected with
+  the mouse elsewhere.
+
 ## 2026-W40 (Mon 28 Sep to Sun 4 Oct): OPEN, post due Sun 4 Oct
 
 13 PRs merged so far, from 7 people (#131 cherry-picked).

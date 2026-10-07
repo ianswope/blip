@@ -44,6 +44,10 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-06  #134 The sidebar keeps the open conversation selected in split view, independent of hover and the keyboard cursor.
+                 Brandon Smith, github.com/bndnsmth, X: none published (asked on the PR)
+2026-10-06  #133 A read push survives a locked Mac (per-chat intents never dropped) and imsg-read says the screen is locked;
+                 read-sync tests isolated from a running blip-bridged. Ian Swope, github.com/ianswope, X https://x.com/ianfs
 2026-10-04  #131 imsg-send waits 150 s for the Automation prompt (was 15 s). Cherry-picked; Windows tray declined for this repo.
                  David Benedic, github.com/daveyb, X: none published (asked on the PR)
 2026-10-04  #83 blip-bridged keeps the Mac channel warm: 18 ms vs 166 ms per query on gus, self-heals in 30 s.
