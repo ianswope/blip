@@ -534,7 +534,7 @@ what it is handed. Keep it that way.
 bun test                                   # 620+ tests, ~1.5 s
 bun collector.ts --deep | jq .unread       # live against the Mac
 bun thread.ts <chat-id> 40 | jq .bubbles   # one conversation
-cp *.qml *.ts *.mjs otp-desktop.py manifest.json ~/.config/omarchy/plugins/nixfred.blip/
+cp -r *.qml *.ts *.mjs otp-desktop.py manifest.json icons ~/.config/omarchy/plugins/nixfred.blip/
 # NEVER leave a backup copy INSIDE ~/.config/omarchy/plugins/ (nixfred.blip.bak-*): it carries the
 # same manifest id, PluginRegistry scans `plugins/*` in glob order and the LAST id wins, so the
 # backup silently replaces the live plugin. A .bak-113 dir ran on gus and vic from 23 to 25 Sep
