@@ -100,6 +100,7 @@ FocusScope {
   // Omarchy's hover-cursor fill for rows and the bubble band alike: the theme's
   // colour and alpha (foreground at 0.08 by default), not a hard-coded copy of them.
   readonly property color hoverFill: Style.hoverFillFor(foreground, accent)
+  readonly property color selectedFill: Style.selectedFillFor(foreground, accent)
   readonly property color theirsText: foreground
 
   // Links inside a bubble take the bubble's readable text color instead of
@@ -578,6 +579,10 @@ FocusScope {
     root.stopAudio() // another conversation: the last one's voice message stops
 
     if (!t) return
+    // A click or direct open must move the sidebar highlight too. Do not use
+    // cursorMoved(): this is a committed open, not another delayed preview.
+    peekTimer.stop()
+    cursor = indexOfChat(t.chat)
     // A sheet opened over the PREVIOUS conversation (an arriving link opens it
     // by itself) otherwise floats over this one, offering a QR for a link that
     // is no longer on screen. Found by driving the live panel, 2026-09-07.
@@ -2712,12 +2717,14 @@ FocusScope {
                   // pinned threads sit first in root.threads, so the cursor
                   // walks these tiles before the rows below
                   readonly property bool hasCursor: root.cursorChat === String(modelData.chat)
+                  readonly property bool selected: root.splitView && root.isShowing(modelData)
                   onHasCursorChanged: if (hasCursor) root.cursorRow = pinnedTile
                   Layout.fillWidth: true
                   Layout.preferredWidth: Math.max(1, (pinnedGrid.width - pinnedGrid.columnSpacing * 2) / 3)
                   implicitHeight: pinnedColumn.implicitHeight + Style.space(12)
                   radius: Style.cornerRadius
-                  color: pinnedHover.hovered || (hasCursor && root.cursorShown)
+                  color: selected ? root.selectedFill
+                    : pinnedHover.hovered || (hasCursor && root.cursorShown)
                     ? root.hoverFill
                     : "transparent"
 
@@ -2954,7 +2961,8 @@ FocusScope {
                   // is briefly past the end of the list renders as nothing
                   // rather than throwing on every binding it has.
                   readonly property var modelData: root.unpinnedThreads[index] || root.absentThread
-                  readonly property bool highlighted: rowHover.hovered || (hasCursor && root.cursorShown)
+                  readonly property bool selected: root.splitView && root.isShowing(modelData)
+                  readonly property bool highlighted: selected || rowHover.hovered || (hasCursor && root.cursorShown)
                   // cursorChat is "" when there is no cursor, which is also an
                   // absent row's chat — without the first test a placeholder
                   // would light up and claim cursorRow.
@@ -2964,7 +2972,7 @@ FocusScope {
                   Layout.fillWidth: true
                   implicitHeight: rowRow.implicitHeight + Style.space(root.splitView ? 30 : 18)
                   radius: Style.cornerRadius
-                  color: highlighted
+                  color: selected ? root.selectedFill : highlighted
                     ? root.hoverFill
                     : "transparent"
 

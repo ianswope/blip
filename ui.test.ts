@@ -373,6 +373,18 @@ describe("QML safety invariants", () => {
     expect(scroll).toContain("Math.min(maxY, bottom + margin - threadFlick.height)");
   });
 
+  test("opening a conversation moves the sidebar cursor and cancels pending previews", () => {
+    const open = qmlFunction("openThread");
+    expect(open).toContain("peekTimer.stop()");
+    expect(open).toContain("cursor = indexOfChat(t.chat)");
+    expect(open.indexOf("if (!t) return")).toBeLessThan(open.indexOf("cursor = indexOfChat(t.chat)"));
+    expect(open.indexOf("peekTimer.stop()")).toBeLessThan(open.indexOf("showThread(t)"));
+    expect(open.indexOf("cursor = indexOfChat(t.chat)")).toBeLessThan(open.indexOf("showThread(t)"));
+    // A committed open must not arm another peek or mark a preview read.
+    expect(open).not.toMatch(/^\s*cursorMoved\(\)/m);
+    expect(open).toContain("if (!(peeking && isShowing(t)))");
+  });
+
   test("rows register themselves as the cursor row instead of scanning threads", () => {
     // threadIndex() walked every thread per row per keypress; cursorChat is one
     // string compare, and the row that matches hands itself to cursorRow so
@@ -383,6 +395,16 @@ describe("QML safety invariants", () => {
     expect(panel).toContain("readonly property bool cursorShown: !searchField.activeFocus");
     expect(panel.split("(hasCursor && root.cursorShown)").length - 1).toBe(2);
     expect(panel.split("onHasCursorChanged: if (hasCursor) root.cursorRow = ").length - 1).toBe(4);
+  });
+
+  test("split-view active chat has a persistent selected fill independent of the keyboard cursor", () => {
+    expect(panel).toContain("readonly property color selectedFill: Style.selectedFillFor(foreground, accent)");
+    // Both the pinned tiles and chronological rows follow the displayed chat's
+    // identity, not its changing position or whether an editor holds focus.
+    expect(panel.split("readonly property bool selected: root.splitView && root.isShowing(modelData)").length - 1).toBe(2);
+    expect(panel.split("color: selected ? root.selectedFill").length - 1).toBe(2);
+    expect(panel).toContain("readonly property bool highlighted: selected || rowHover.hovered");
+    expect(panel).toContain("function isShowing(t) { return inThread && String(active.chat) === String(t.chat) }");
   });
 
   test("leaving a field or a conversation brings the cursor row back", () => {

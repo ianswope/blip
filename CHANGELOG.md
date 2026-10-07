@@ -21,6 +21,13 @@
   depending on which copy the Mac returned first. Search now uses the same
   echo rules as the conversation view, and a note to yourself that iCloud
   re-synced as several copies is one hit, from you.
+
+- **Opening a chat moves the sidebar highlight.** Clicking a conversation no
+  longer leaves the keyboard cursor on a different chat. In the app window,
+  the displayed conversation keeps a separate selected fill regardless of
+  mouse hover, editor focus or list order. A pending sidebar preview is
+  cancelled when a conversation is explicitly opened.
+
 - **Voice messages play.** An iPhone voice message ("Audio Message.caf") arrived
   with no MIME type in chat.db, only Apple's type code, so Blip saved it as a
   `.bin` and refused to open it. The Mac bridge now fills a missing MIME from
