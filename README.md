@@ -606,9 +606,40 @@ network — which is exactly the case Blip is usually in. Treat it as a bonus
 on a wired desk Mac, never as the reason you left sleep enabled.
 
 **Also worth knowing:** the Mac must be in a logged-in desktop session, not
-parked at the login window — see the requirements above. Sleep and the login
-window fail differently: asleep, Blip goes offline entirely; at the login
-window it can still read `chat.db` but cannot send.
+parked at the login window — see the requirements above. Sleep, the login
+window and the lock screen fail differently: asleep, Blip goes offline
+entirely; at the login window it can still read `chat.db` but cannot send;
+locked, polling and new messages keep flowing and only the read push stops.
+
+**The lock screen is the third way a gateway goes dark, and the sneaky one.**
+A Mac that never sleeps and never logs out still *locks*: by default the
+screen saver starts after 20 idle minutes and the password is required 5
+minutes after that. Behind the lock screen every app's windows vanish from
+System Events, so the one Blip feature that drives Messages' own window — the
+per-conversation read push under `push_read=thread` — fails 25 minutes after
+you last touched the Mac and recovers the second you unlock it. Reading
+`chat.db` needs no window, which is exactly what makes it confusing: Blip
+reports `healthy=false` with *"the Mac's screen is locked"*, you walk over,
+and Messages is open and fine. Keep a gateway Mac unlocked:
+
+```bash
+defaults -currentHost write com.apple.screensaver idleTime -int 0   # screen saver: Never
+```
+
+That is the same switch as System Settings ▸ Lock Screen ▸ *Start Screen Saver
+when inactive* ▸ Never. With the display already set never to turn off
+(`displaysleep 0` above), the lock has nothing left to trigger it; a manual
+lock (⌃⌘Q, a hot corner) still does. `loginwindow` re-reads the value the next
+time its idle timer fires, so nothing needs restarting. The trade-off is
+plain: that Mac's screen stays unlocked for as long as it is a gateway. Undo
+with `defaults -currentHost delete com.apple.screensaver idleTime`.
+
+Check it from Linux without touching the Mac's screen (no permission prompt;
+`ioreg` is not gated):
+
+```bash
+ssh <mac> 'ioreg -n Root -d1 -a | grep -c CGSSessionScreenIsLocked'   # 0 = unlocked
+```
 
 **Verify from Linux.** With the Mac configured, this should answer instantly
 rather than hang:

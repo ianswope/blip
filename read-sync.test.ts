@@ -107,8 +107,9 @@ print('verified')
   const statePath = join(home, ".local/state/blip/state.json");
   const state = () => JSON.parse(readFileSync(statePath, "utf8"));
   const run = (...args: string[]) => {
+    // HOME isolates the shims; the runtime dir isolates the live accelerator.
     const result = spawnSync(process.execPath, [join(import.meta.dir, "collector.ts"), "--deep", ...args], {
-      encoding: "utf8", env: { ...process.env, HOME: home }, timeout: 10000,
+      encoding: "utf8", env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: home }, timeout: 10000,
     });
     expect(result.status).toBe(0);
     const out = JSON.parse(result.stdout);
@@ -140,6 +141,36 @@ describe("collector read sync lifecycle", () => {
     f.run();
     expect(f.actions()).toHaveLength(2);
     expect(f.state().pendingReads).toEqual({});
+  });
+  test("a prolonged Mac failure keeps the read intent and dot suppressed until recovery", () => {
+    const f = fixture(); f.put("control.json", { fail: true });
+    expect(f.run("--read", chat, "--seen", old).unread).toBe(0);
+    for (let attempt = 2; attempt <= 7; attempt++) {
+      const st = f.state(); st.pendingReads[chat].retryAt = 0; f.save(st);
+      const out = f.run();
+      expect(out.unread).toBe(0);
+      expect(out.error).toContain("Accessibility");
+      expect(f.state().pendingReads[chat]?.attempts).toBe(attempt);
+    }
+    // Polls during backoff neither reopen the dot nor hammer Messages.
+    expect(f.run().unread).toBe(0);
+    expect(f.actions()).toHaveLength(7);
+    f.put("control.json", {});
+    const st = f.state(); st.pendingReads[chat].retryAt = 0; f.save(st);
+    expect(f.run().unread).toBe(0);
+    expect(f.state().pendingReads).toEqual({});
+    expect(f.run().unread).toBe(0);
+    expect(f.actions()).toHaveLength(8);
+  }, 15000);
+  test("a newer inbound cancels a prolonged read retry and remains unread", () => {
+    const f = fixture(); f.run();
+    f.save({ ...f.state(), pendingReads: {
+      [chat]: { unread: false, seen: old, attempts: 7, retryAt: 0 },
+    } });
+    f.put("remote.json", snapshot(1, recent));
+    expect(f.run().unread).toBe(1);
+    expect(f.state().pendingReads).toEqual({});
+    expect(f.actions()).toHaveLength(0);
   });
   test("offline mark-unread survives and a subsequent Mac read clears Blip", () => {
     const f = fixture(0); f.put("control.json", { offline: true });
@@ -224,6 +255,8 @@ describe("policy and ordering integration", () => {
 
 
 describe("repeated read/unread convergence", () => {
+  // 16 sequences x 6 collector spawns, each starting bun and several Python
+  // shims: 10-16 s on an idle 16-core box, over 20 s with anything else running.
   test("every four-click offline read/unread sequence converges to the last click", () => {
     for (let mask = 0; mask < 16; mask++) {
       const f = fixture(mask % 2);
@@ -241,7 +274,7 @@ describe("repeated read/unread convergence", () => {
       expect(f.state().pendingReads).toEqual({});
       expect(f.actions().length).toBeLessThanOrEqual(1);
     }
-  }, 20000);
+  }, 60000);
   test("alternating local and Mac gestures converge without stale overrides", () => {
     const f = fixture(0);
     const steps = ["unread", "read", "mac-unread", "mac-read", "unread", "mac-read", "mac-unread", "read"];

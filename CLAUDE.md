@@ -196,6 +196,11 @@ what it is handed. Keep it that way.
   retry counters/deadlines and bounded bridge status errors. Persist BEFORE any
   Mac mutation, then execute one due action per collector run. Never detach it.
   A failed action survives restarts and retries with backoff (2–60 seconds).
+  Only `--all` is dropped on failure (it cannot be bounded); a per-chat intent
+  is NEVER dropped, however many attempts. Dropping one after five tries
+  resurrected a dot the user had already read through `intent.seen`, after a
+  night of a locked Mac (441 attempts, 2026-10-06). A kept intent cannot
+  consume a newer inbound: the snapshot compare and `--through` guard it.
   `imsg read-state` returns the COMPLETE metadata-only unread snapshot; it is
   independent of the message preview window. `read_state.py` is shared with
   `imsg-read` so the writer and reader agree, including manual unread below
@@ -607,6 +612,16 @@ to whatever has focus otherwise.
     count is zero. Partial progress or an unreadable database is not success. The collector records every push in
     `~/.local/state/blip/push-read.log` (exit code + status line, no content).
     A disabled menu item is NOT evidence of anything; chat.db is the referee.
+  - **A LOCKED screen hides every window from System Events** (2026-10-06).
+    Logged in, awake, Messages running — and `count windows` is 0, so every
+    `--chat` push failed with "no accessible window" from 25 minutes after
+    the owner last touched the Mac (20-min screen saver + 5-min lock, the
+    defaults) until the next unlock, and the message sent him to "log in and
+    open Messages", where Messages was open and fine. `imsg-read` now asks
+    `ioreg` (`IOConsoleUsers[].CGSSessionScreenIsLocked`, no TCC) whenever
+    System Events fails or finds no window, and names the lock instead. The
+    cure is on the Mac, not in Blip: screen saver Never (README, "Keeping the
+    Mac awake"). `--chat` is the only path that needs a window; polling never did.
   - With `push_read=all` a per-thread read pushes NOTHING by design — only
     mark-all does. Conversations read in Blip stay unread on the phone until
     the next mark-all. Documented trade-off, not a bug.
