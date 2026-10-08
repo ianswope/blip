@@ -25,7 +25,7 @@ PEOPLE (verified handles)
   Brenden Bishop    github.com/bbishdotdev  X https://x.com/bbishdotdev  (his site bbish.dev; X name matches)
   Marshall Huss     github.com/mwhuss       X https://x.com/mwhuss       (X name matches; posts about his Omarchy plugin, replies to @NixFred)
   Jethro Jones      github.com/jethrojones   X https://x.com/jethrojones  (X name matches; app-building and schools, fits his known work) (confirmed by Fred 2026-09-18)
-  Damon Janis      github.com/damonjanis   X https://x.com/damonjanis    (X name matches; posts about Omarchy and replies to @dhh)
+  Damon Janis      github.com/damonjanis   X https://x.com/damonjanis    (confirmed by Damon on #120, 2026-10-07)
   Baden             github.com/badenpiland  X https://x.com/badenpiland  (GitHub profile twitter_username AND social_accounts; X name "Baden"; CORRECTED 2026-09-25: the earlier "github.com/bpiland → @bhp35" line named a GitHub user and an X account that do not exist)
   Danny Cecil       github.com/jefehoser    X https://x.com/jefehoser    (same unique login on X; posts about Omarchy) (confirmed by Fred 2026-09-16)
   Ian Swope         github.com/ianswope     X https://x.com/ianfs        (GitHub profile twitter_username AND social_accounts, found 2026-09-25; @ianfs replies to @NixFred about Omarchy. The dormant @IanSwope is NOT him)
@@ -35,6 +35,7 @@ PEOPLE (verified handles)
   Kb2uka            github.com/Kb2uka       X https://x.com/StudioXRadio (he said so on #91, 2026-09-18: "@StudioXRadio, tag away")
   Chad Stovern      github.com/chadhs       X https://x.com/chadstovern  (he said so on #124, 2026-09-30)
   Greyforge Labs    github.com/GreyforgeLabs X https://x.com/GreyforgeLabs (GitHub profile twitter_username AND social_accounts; X name matches, checked 2026-10-02)
+  Brandon Smith     github.com/bndnsmth     X https://x.com/bndnsmth     (he said so on #134, 2026-10-07)
   Fred Nix          github.com/nixfred      X https://x.com/nixfred
 
 Earlier contributors and their handles: CONTRIBUTORS-X-POST.md.
@@ -56,7 +57,7 @@ marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 2026-10-07  #135 The documented deploy line copies icons/, so the conversation menu has its icons. Ian Swope,
                  github.com/ianswope, X https://x.com/ianfs
 2026-10-06  #134 The sidebar keeps the open conversation selected in split view, independent of hover and the keyboard cursor.
-                 Brandon Smith, github.com/bndnsmth, X: none published (asked on the PR)
+                 Brandon Smith, github.com/bndnsmth, X https://x.com/bndnsmth
 2026-10-06  #133 A read push survives a locked Mac (per-chat intents never dropped) and imsg-read says the screen is locked;
                  read-sync tests isolated from a running blip-bridged. Ian Swope, github.com/ianswope, X https://x.com/ianfs
 2026-10-04  #131 imsg-send waits 150 s for the Automation prompt (was 15 s). Cherry-picked; Windows tray declined for this repo.

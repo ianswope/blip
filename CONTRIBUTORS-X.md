@@ -20,7 +20,7 @@ tags are at the bottom.
 | Zach Wilke | zachwilke | https://x.com/zachwilke_1 | 5 | his site pinefall.dev |
 | Johan Thorén | johanthoren | https://x.com/jmythoren | 3 | GitHub profile + social accounts |
 | Guido Jouret | gjouret | https://x.com/gjouret | 2 | GitHub profile + social accounts |
-| Damon Janis | damonjanis | https://x.com/damonjanis | 2 | name match, posts Omarchy, replies to @dhh |
+| Damon Janis | damonjanis | https://x.com/damonjanis | 5 | confirmed by Damon on #120, 2026-10-07 |
 | Tobi Lehman | tlehman | https://x.com/tlehmanifold | 1 | GitHub profile |
 | Joshua Warren | joshuaswarren | https://x.com/joshuaswarren | 1 | GitHub social accounts |
 | Espen Zachrisen | ezachrisen | https://x.com/ezachrisen | 1 | GitHub profile |
@@ -29,6 +29,7 @@ tags are at the bottom.
 | Kb2uka | Kb2uka | https://x.com/StudioXRadio | 1 | said so himself on #91 ("@StudioXRadio, tag away"), 2026-09-18; recorded 2026-09-26 |
 | Brad Larson | followbl | https://x.com/followbl | 2 | confirmed by Brad on #113, 2026-09-26 |
 | Chad Stovern | chadhs | https://x.com/chadstovern | 1 | he said so himself on #124, 2026-09-30 |
+| Brandon Smith | bndnsmth | https://x.com/bndnsmth | 1 | he said so himself on #134, 2026-10-07 |
 | Baden | badenpiland | https://x.com/badenpiland | 1 | GitHub profile + social accounts (older notes said @bhp35, which does not exist) |
 | Greyforge Labs | GreyforgeLabs | https://x.com/GreyforgeLabs | 1 | GitHub profile + social accounts; X name matches, 2026-10-02 |
 
@@ -44,7 +45,6 @@ Nobody right now.
 | joshhattan | joshhattan | 2 | nothing published; asked on the PR 2026-09-19 |
 | David Reinecke | dreinecke | 1 (+ issues) | nothing published, 2026-09-25 |
 | cw228 | cw228 | 1 | nothing published; asked on the PR 2026-09-18 |
-| Brandon Smith | bndnsmth | 1 | nothing published; asked on #134 2026-10-06 |
 | David Benedic | daveyb | 1 (cherry-picked) | nothing published; asked on #131 2026-10-04 |
 | "Unhook Dev" | tolewis | 1 | nothing published, 2026-09-25 |
 
@@ -56,7 +56,7 @@ None have published an X account (checked 2026-09-25): jacobaross, Zain Nayer
 ## Paste block
 
 ```
-@ianfs @jondkinney @jefehoser @adamgamble @zachwilke_1 @jmythoren @gjouret @damonjanis @tlehmanifold @joshuaswarren @ezachrisen @jethrojones @bbishdotdev @badenpiland @followbl @StudioXRadio @chadstovern @GreyforgeLabs
+@ianfs @jondkinney @jefehoser @adamgamble @zachwilke_1 @jmythoren @gjouret @damonjanis @tlehmanifold @joshuaswarren @ezachrisen @jethrojones @bbishdotdev @badenpiland @followbl @StudioXRadio @chadstovern @GreyforgeLabs @bndnsmth
 ```
 
 Plus by name: Erik Fillipsveen (github.com/Fileri), joshhattan,

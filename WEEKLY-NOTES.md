@@ -64,7 +64,7 @@ reconstructed on Sunday from memory.
   error names the lock. His test change also fixed 15 read-sync tests that
   failed on any machine running the #83 warm channel.
 - **#134 the sidebar shows which chat is open.** Brandon Smith
-  (github.com/bndnsmth, new contributor; X asked). In the two-pane window
+  (github.com/bndnsmth, new contributor; X https://x.com/bndnsmth, confirmed on the PR). In the two-pane window
   the highlight could sit on a different chat than the one shown. Verified
   live on gus with a screenshot: the open chat's tile stays selected with
   the mouse elsewhere.
