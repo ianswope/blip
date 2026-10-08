@@ -719,7 +719,11 @@ describe("QML safety invariants", () => {
     // is still clickable a week later. If this disappears, old iMessage
     // notifications go inert again and nothing else fails.
     expect(widget).toContain('"--hint=string:omarchy-exec-argv:"');
-    expect(widget).toContain('root.moduleName, "goto", chatArg');
+    expect(widget).toContain('root.moduleName, "notified", chatArg');
+    // The click must work with automation=off (the default): `goto` is gated,
+    // and a refused click closed the toast having done nothing.
+    expect(widget).toMatch(/function notified\(chat: string\): string \{ return root\.openNotified\(chat\) \}/);
+    expect(widget).toContain("root.rememberToasted(chatArg)");
     // The chat id goes in as its own argv element, never inside a shell
     // string, and only when it is shaped like a handle.
     expect(widget).toContain("JSON.stringify(");
