@@ -863,7 +863,9 @@ BarWidget {
   }
   /** A notification was clicked. Never refused for automation=off: before
    *  this the click ran the gated `goto`, which refused, and the toast
-   *  closed having done nothing. */
+   *  closed having done nothing. The answer is always "opened": two
+   *  answers would tell another local process whether a chat id is unread
+   *  or was just toasted (Fred, #136). */
   function openNotified(chat) {
     var want = String(chat || "").replace(/^\+/, "")
     var ok = want !== "" && toastedChats.indexOf(want) >= 0
@@ -871,8 +873,7 @@ BarWidget {
       var c = String(threads[i].chat).replace(/^\+/, "")
       if (c === want && threads[i].unread > 0) ok = true
     }
-    if (ok && show(want)) return "shown"
-    open()
+    if (!(ok && show(want))) open()
     return "opened"
   }
   Timer {
