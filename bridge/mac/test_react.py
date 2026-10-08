@@ -357,6 +357,7 @@ class React(unittest.TestCase):
             stop, messages = self.run_react([])
         self.assertEqual(stop.result["code"], "not-last")
         self.assertEqual(messages.requests, [])
+        self.assertEqual(self.ui.selected, [])   # Messages never opened the conversation
 
     def test_macos27_a_menu_click_that_fails_presses_nothing(self):
         with patch.object(react, "macos_major", return_value=27), \

@@ -746,6 +746,9 @@ def react(con, target: dict, kind: int, remove: bool, self_handles: list, ui, ru
     expected = plan(current_kind(my_rows(con, target["guids"], self_handles)), kind, remove)
     if expected is None:
         return {"ok": True, "result": "unchanged"}
+    if macos_major() >= 27 and not is_last(con, target):   # refused before Messages is touched
+        raise Stop("not-last", EX_UNSUPPORTED,
+                   "on this macOS only the newest message in a conversation can take a tapback")
     why = system_events_consent()   # before ensure_messages: it is already a System Events call
     if why:
         raise Stop("consent", EX_NOPERM, why)

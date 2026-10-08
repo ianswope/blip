@@ -60,6 +60,59 @@ BarWidget {
    *  The shim refuses the tool without the same key. */
   property bool tapbacks: false
 
+  // The imsg-react run lives HERE, not in the view that asked for it: the
+  // popout's surface and the app window are destroyed on close, and a run
+  // takes 15-75 s on a macOS 27 gateway, so a run owned by the view died
+  // with it and its failure was never said. A failure waits in
+  // tapbackFailures[chat] until a view showing that conversation takes it.
+  property string tapbackChat: ""          // the conversation of the run in flight
+  readonly property bool tapbackRunning: reactProc.running
+  property var tapbackFailures: ({})
+  /** Every exit: (chat, ok). A view on that chat settles its pending pill. */
+  signal tapbackExited(string chat, bool ok)
+  function runTapback(chat, argv) {
+    if (reactProc.running) return false
+    root.tapbackChat = String(chat)
+    reactProc.lastErr = ""
+    reactProc.command = argv
+    reactProc.running = true
+    return true
+  }
+  function tapbackFailed(chat, text) {
+    var f = Object.assign({}, root.tapbackFailures)
+    f[chat] = text
+    root.tapbackFailures = f
+    root.tapbackExited(chat, false)
+  }
+  /** The failure waiting for `chat`, removed as it is handed over; "" if none. */
+  function takeTapbackFailure(chat) {
+    var text = root.tapbackFailures[chat]
+    if (text === undefined) return ""
+    var f = Object.assign({}, root.tapbackFailures)
+    delete f[chat]
+    root.tapbackFailures = f
+    return text
+  }
+  Process {
+    id: reactProc
+    property string lastErr: ""
+    // A Process that fails to start emits no exited (see the collector):
+    // without this the pill would stay dimmed and the menu busy for good.
+    property bool sawExit: false
+    onRunningChanged: {
+      if (running) { sawExit = false; return }
+      Qt.callLater(function() {
+        if (!reactProc.sawExit && !reactProc.running) root.tapbackFailed(root.tapbackChat, TapbackActions.TAPBACK_NOT_STARTED)
+      })
+    }
+    stderr: StdioCollector { onStreamFinished: reactProc.lastErr = text }
+    onExited: function(code, status) {
+      reactProc.sawExit = true
+      if (code === 0) root.tapbackExited(root.tapbackChat, true)
+      else root.tapbackFailed(root.tapbackChat, TapbackActions.tapbackFailure(code, reactProc.lastErr))
+    }
+  }
+
   // ---- collector state
   property var threads: []           // [{chat,name,handle,service,last_ts,last_text,last_from_me,count,unread,pinned,pin_order}]
   readonly property string threadsJson: JSON.stringify(threads) // includes optimistic reads and edits
