@@ -27,7 +27,11 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
-### Wed 7 Oct: #135, #136
+### Wed 7 Oct: #135, #136, #137
+
+- **#137 the toast click no longer leaks unread state.** Ian Swope
+  (https://x.com/ianfs), following the review note on #136: the reply is
+  always "opened", so another program cannot learn which chats are unread.
 
 - **#136 clicking a message toast opens the conversation.** Ian Swope
   (https://x.com/ianfs). With the default automation=off a click only
