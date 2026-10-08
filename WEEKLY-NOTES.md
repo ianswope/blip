@@ -27,7 +27,14 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
-### Wed 7 Oct: #135, #136, #137
+### Wed 7 Oct: #135, #136, #137, #138
+
+- **#138 tapbacks on macOS 27.** Ian Swope (https://x.com/ianfs). Every
+  tapback failed on a 27 gateway: no per-user TCC.db, and bubbles there
+  offer no tapback actions. Now the permission is asked of macOS without a
+  prompt, and the newest message is reacted to through Messages' own
+  Tapback Picker, only after its label matches. Older messages are refused
+  on 27. Fred's Mac is on 27.2: the check now passes there.
 
 - **#137 the toast click no longer leaks unread state.** Ian Swope
   (https://x.com/ianfs), following the review note on #136: the reply is

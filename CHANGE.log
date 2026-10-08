@@ -44,6 +44,9 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-07  #138 Tapbacks work on a macOS 27 gateway: consent asked of macOS without a prompt (no TCC.db there), the
+                 Tapback Picker on the newest message, label-checked before any press. Ian Swope, github.com/ianswope,
+                 X https://x.com/ianfs
 2026-10-07  #137 notified always answers 'opened', so its reply no longer reveals whether a chat is unread.
                  Ian Swope, github.com/ianswope, X https://x.com/ianfs
 2026-10-07  #136 Clicking a message notification opens its conversation, with automation=off too (new scoped IPC 'notified').
