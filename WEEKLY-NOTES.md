@@ -85,7 +85,7 @@ reconstructed on Sunday from memory.
   live on gus with a screenshot: the open chat's tile stays selected with
   the mouse elsewhere.
 
-## 2026-W40 (Mon 28 Sep to Sun 4 Oct): OPEN, post due Sun 4 Oct
+## 2026-W40 (Mon 28 Sep to Sun 4 Oct): post missed 4 Oct, folded into Post 5 with W41 (Sun 11 Oct)
 
 13 PRs merged so far, from 7 people (#131 cherry-picked).
 
