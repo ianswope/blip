@@ -27,7 +27,12 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
-### Wed 7 Oct: #135
+### Wed 7 Oct: #135, #136
+
+- **#136 clicking a message toast opens the conversation.** Ian Swope
+  (https://x.com/ianfs). With the default automation=off a click only
+  dismissed it, because the toast ran the gated goto. A new IPC opens only
+  chats Blip toasted or that are still unread, otherwise the list.
 
 - **#135 the deploy line copies the menu icons.** Ian Swope
   (https://x.com/ianfs). The copy line in CLAUDE.md, AGENTS.md and
