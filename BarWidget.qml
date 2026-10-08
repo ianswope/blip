@@ -824,7 +824,8 @@ BarWidget {
     else if (chatArg !== "" && /^[A-Za-z0-9._@:;$-]{1,256}$/.test(chatArg))
       reopen = ["--hint=string:omarchy-exec-argv:" + JSON.stringify(
         ["qs", "-p", root.shellRoot, "ipc", "call",
-         root.moduleName, "goto", chatArg])]
+         root.moduleName, "notified", chatArg])]
+    if (reopen.length > 0 && notifyProc.toastCode === "") root.rememberToasted(chatArg)
 
     notifyProc.command = [
       "notify-send",
@@ -847,6 +848,32 @@ BarWidget {
     // waits for closure — a toast parked under a stationary cursor must not
     // dam the whole serial queue (Codex, 1.2.0). 45 s is watchdog, not UX.
     toastWatchdog.restart()
+  }
+  // Chats this session has toasted, newest last. `notified` (the toast's
+  // click) opens only these, or a chat that is still unread, so the ungated
+  // door cannot open an arbitrary conversation for another local process.
+  // Memory only: after a shell restart an old row opens its chat while it is
+  // still unread, and the list otherwise.
+  property var toastedChats: []
+  function rememberToasted(chat) {
+    var l = toastedChats.filter(function(c) { return c !== chat })
+    l.push(chat)
+    if (l.length > 64) l = l.slice(l.length - 64)
+    toastedChats = l
+  }
+  /** A notification was clicked. Never refused for automation=off: before
+   *  this the click ran the gated `goto`, which refused, and the toast
+   *  closed having done nothing. */
+  function openNotified(chat) {
+    var want = String(chat || "").replace(/^\+/, "")
+    var ok = want !== "" && toastedChats.indexOf(want) >= 0
+    for (var i = 0; !ok && want !== "" && i < threads.length; i++) {
+      var c = String(threads[i].chat).replace(/^\+/, "")
+      if (c === want && threads[i].unread > 0) ok = true
+    }
+    if (ok && show(want)) return "shown"
+    open()
+    return "opened"
   }
   Timer {
     id: toastWatchdog
@@ -974,7 +1001,8 @@ BarWidget {
   // ------------------------------------------------------------ IPC
   // IPC that sends or reads message content is a deputy for any local
   // process (Codex audit #3). It is opt-in: automation=on in bridge.conf.
-  // status/open/close/toggle/window/app stay available — they expose nothing.
+  // status/open/close/toggle/window/app stay available — they expose nothing —
+  // and so does notified, the toast's click, scoped to chats Blip toasted.
   property bool automationOn: false
   /** `ui_font=theme` in bridge.conf: never use SF Pro even when it is present. */
   property bool uiFontTheme: false
@@ -1063,6 +1091,7 @@ BarWidget {
     function toggle(): void { root.toggle() }
     function toggleon(screen: string): void { root.toggleOn(screen) }
     function openon(screen: string): void { root.openOn(screen) }
+    function notified(chat: string): string { return root.openNotified(chat) }
     function goto(chat: string): string { if (!root.automationOn) return root.automationOff; return root.show(chat) ? "shown" : "not a conversation id" }
     function copycode(): string { if (!root.automationOn) return root.automationOff; return root.copyCode() }
     function typecode(): string { if (!root.automationOn) return root.automationOff; return root.typeCode() }
