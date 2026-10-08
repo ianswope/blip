@@ -724,6 +724,10 @@ describe("QML safety invariants", () => {
     // and a refused click closed the toast having done nothing.
     expect(widget).toMatch(/function notified\(chat: string\): string \{ return root\.openNotified\(chat\) \}/);
     expect(widget).toContain("root.rememberToasted(chatArg)");
+    // One answer whatever happened, or the reply leaks whether a chat id is
+    // unread or was just toasted (#136 review).
+    const fn = widget.slice(widget.indexOf("function openNotified("), widget.indexOf("id: toastWatchdog"));
+    expect(fn.match(/return "[^"]*"/g)).toEqual(['return "opened"']);
     // The chat id goes in as its own argv element, never inside a shell
     // string, and only when it is shaped like a handle.
     expect(widget).toContain("JSON.stringify(");
