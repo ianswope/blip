@@ -27,7 +27,11 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
-### Wed 7 Oct: #135, #136, #137, #138
+### Wed 7 Oct: #135, #136, #137, #138, #139
+
+- **#139 a failed tapback is never silent.** Ian Swope (https://x.com/ianfs).
+  A run takes 15-75 s on macOS 27; closing Blip meanwhile lost the reason.
+  The run now lives in the bar widget and the failure waits for the chat.
 
 - **#138 tapbacks on macOS 27.** Ian Swope (https://x.com/ianfs). Every
   tapback failed on a 27 gateway: no per-user TCC.db, and bubbles there
