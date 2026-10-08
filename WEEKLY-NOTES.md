@@ -27,6 +27,22 @@ reconstructed on Sunday from memory.
 
 ## 2026-W41 (Mon 5 Oct to Sun 11 Oct): OPEN, post due Sun 11 Oct
 
+### What people said this week (quote with attribution in the post)
+
+- **Ian Swope** (https://x.com/ianfs), on #138, 7 Oct: "Thanks Fred, and
+  thanks for Blip itself. I use it all day and really love it, so it's a
+  pleasure to help where I can. Glad this one brought tapbacks back on your
+  27.2 gateway too." Then found the cause of the silent tapback failure the
+  same night and sent it as #139.
+- **Damon Janis** (https://x.com/damonjanis), on #120, 7 Oct: "Happy to be
+  tagged, I'm @damonjanis on X. Thanks for getting the whole series merged
+  and deployed!" (His read-sync series #120, #121, #122 is complete.)
+- **Brandon Smith** (https://x.com/bndnsmth), on #134, 7 Oct: "Appreciate
+  the quick review and merge. Feel free to tag @bndnsmth in your post."
+- Ian Swope sent six PRs this week (#133, #135, #136, #137, #138, #139),
+  three of them the same evening, two of them closing review notes Larry
+  left on his previous PR within the hour.
+
 ### Wed 7 Oct: #135, #136, #137, #138, #139
 
 - **#139 a failed tapback is never silent.** Ian Swope (https://x.com/ianfs).
