@@ -547,6 +547,14 @@ answers. Needs a
 `blip-setup` re-run: it installs `imsg-react` and the new `blip-dispatch` on
 the Mac and the `imsg-react` shim on Linux.
 
+On a macOS 27 gateway the bubbles no longer carry the tapbacks, so
+`imsg-react` opens Messages' own Edit ▸ Tapback Last Message… picker instead,
+checks that it opened on your message, and presses the tapback there. That
+picker only ever opens on a conversation's newest message, so on 27 only the
+newest message can take a tapback; an older one is refused with that reason.
+A run takes 15–20 seconds. Each run's outcome (code and exit status, never
+text) is appended to `~/.blip/react.log` on the Mac.
+
 **Two or more monitors:** one bar widget per screen is normal; only the one
 on the first screen polls and owns the app window, the others show the
 badge and forward clicks to it.
