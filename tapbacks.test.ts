@@ -118,17 +118,18 @@ describe("message menu: tapbacks", () => {
 
   test("offered only for a bubble the tool acts on, and one at a time until chat.db has answered", () => {
     expect(view).toContain("tapbacksShown: root.tapbacksOn && TapbackActions.canTapback(root.messageContext, root.activeIsGroup)");
-    expect(view).toContain("readonly property bool tapbacksBusy: reactProc.running || pendingTapback !== null");
+    expect(view).toContain("readonly property bool tapbacksBusy: (hostWidget ? hostWidget.tapbackRunning === true : false) || pendingTapback !== null");
     expect(view).toContain("tapbacksBusy: root.tapbacksBusy");
-    expect(view).toContain("if (root.tapbacksBusy || !root.tapbacksOn || !TapbackActions.canTapback(message, root.activeIsGroup)) return");
+    expect(view).toContain("if (root.tapbacksBusy || !root.tapbacksOn || !hostWidget || !TapbackActions.canTapback(message, root.activeIsGroup)) return");
+    expect(widget).toContain("if (reactProc.running) return false");
     expect(menu).toContain("visible: menu.tapbacksShown");
     expect(menu).toContain("enabled: !menu.tapbacksBusy");
   });
 
   test("spawned through the conversation's source, add or remove decided by tapback-actions.ts", () => {
-    expect(view).toContain('SourceId.bridgeArgv(reactProc.chat, "imsg-react", hostWidget ? hostWidget.binDir : root.home + "/bin")');
+    expect(view).toContain('SourceId.bridgeArgv(chat, "imsg-react", hostWidget.binDir)');
     // the pending pill and the tool are told the same thing
-    expect(view).toContain("TapbackActions.pendingTapback(reactProc.chat, String(message.guid), kind, current)");
+    expect(view).toContain("TapbackActions.pendingTapback(chat, String(message.guid), kind, current)");
     expect(view).toContain("TapbackActions.tapbackArgs(String(message.guid), kind, current)");
   });
 
@@ -178,26 +179,31 @@ describe("message menu: tapbacks", () => {
   });
 
   test("drawn at once as pending; chat.db settles it, a failure takes it away", () => {
-    const exited = view.slice(view.indexOf("id: reactProc"), view.indexOf("// Attachment fetcher"));
+    // The run belongs to BarWidget: the popout and the window are destroyed on
+    // close, and a run owned by the view died with it, failure unsaid.
+    expect(view).not.toContain("id: reactProc");
+    const proc = widget.slice(widget.indexOf("id: reactProc"), widget.indexOf("// ------------------------------------------------------------ toasts"));
+    expect(proc).toContain("if (code === 0) root.tapbackExited(root.tapbackChat, true)");
+    expect(proc).toContain("else root.tapbackFailed(root.tapbackChat, TapbackActions.tapbackFailure(code, reactProc.lastErr))");
+    // a tool that never started emits no exited: caught the way the collector is
+    expect(proc).toContain("reactProc.sawExit = true");
+    expect(proc).toContain("if (!reactProc.sawExit && !reactProc.running) root.tapbackFailed(root.tapbackChat, TapbackActions.TAPBACK_NOT_STARTED)");
+    // a failure waits per conversation until a view showing it takes it
+    expect(widget).toContain("f[chat] = text");
+    expect(widget).toContain("function takeTapbackFailure(chat)");
+    const exited = view.slice(view.indexOf("function onTapbackExited"), view.indexOf("// Attachment fetcher"));
     expect(exited).toContain("Object.assign({}, root.pendingTapback, { done: true })");
-    expect(exited).toContain("if (!root.inThread || String(root.active.chat) !== reactProc.chat) root.pendingTapback = null");
+    expect(exited).toContain("if (!root.inThread || String(root.active.chat) !== chat) root.pendingTapback = null");
     // the tool saw the row: the load starts at once, and after done, so it may settle the pill
-    expect(exited).toContain("root.requestThreadLoad(reactProc.chat)");
-    expect(exited.indexOf("{ done: true })")).toBeLessThan(exited.indexOf("root.requestThreadLoad(reactProc.chat)"));
+    expect(exited.indexOf("{ done: true })")).toBeLessThan(exited.indexOf("root.requestThreadLoad(chat)"));
     const failed = exited.slice(exited.indexOf("} else {"));
-    expect(failed).toContain("root.tapbackFailed(reactProc.chat, TapbackActions.tapbackFailure(code, reactProc.lastErr))");
-    // a tool that never started emits no exited: caught the way BarWidget's collector is
-    expect(exited).toContain("reactProc.sawExit = true");
-    expect(exited).toContain("if (!reactProc.sawExit && !reactProc.running) root.tapbackFailed(reactProc.chat, TapbackActions.TAPBACK_NOT_STARTED)");
-    // a failure clears the pill, and is said in its own conversation, now or when it is opened again
-    const failedFn = view.slice(view.indexOf("function tapbackFailed"), view.indexOf("readonly property bool tapbacksBusy"));
-    expect(failedFn).toContain("root.pendingTapback = null");
-    expect(failedFn).toContain("if (root.active && String(root.active.chat) === chat) root.note = text");
-    expect(failedFn).toContain("else root.tapbackNote = { chat: chat, text: text }");
+    expect(failed).toContain("root.pendingTapback = null");
+    expect(failed).toContain("if (root.active && String(root.active.chat) === chat) root.note = root.hostWidget.takeTapbackFailure(chat)");
+    // opening the conversation later, in either surface, says it there
     const show = view.slice(view.indexOf("function showThread"), view.indexOf("clearAttachments()", view.indexOf("function showThread")));
-    expect(show.indexOf('note = ""')).toBeLessThan(show.indexOf("note = root.tapbackNote.text"));
-    expect(view).toContain("root.tapbackNote = null\n    reactProc.running = true");
-    expect(exited).not.toContain("reactProc.running = true");
+    expect(show.indexOf('note = ""')).toBeLessThan(show.indexOf("hostWidget.takeTapbackFailure(String(t.chat))"));
+    // a new tapback drops an older failure for the same conversation
+    expect(view).toContain("hostWidget.takeTapbackFailure(chat)\n    root.pendingTapback = TapbackActions.pendingTapback(");
     // the dimmed pill is the only "on its way"; the status line speaks only for a failure
     expect(view).not.toContain('"tapback…"');
     expect(view).toContain('if (root.note.indexOf("tapback: ") === 0) root.note = ""');

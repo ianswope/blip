@@ -624,8 +624,9 @@ FocusScope {
     firstLoad = true
     pushPending = false
     note = ""
-    // a tapback that failed while you were elsewhere is said where it was sent
-    if (root.tapbackNote && root.tapbackNote.chat === String(t.chat)) { note = root.tapbackNote.text; root.tapbackNote = null }
+    // a tapback that failed while you were elsewhere, or with Blip closed, is said where it was sent
+    var failed = hostWidget ? hostWidget.takeTapbackFailure(String(t.chat)) : ""
+    if (failed !== "") note = failed
     loading = true
     composeField.text = drafts[String(t.chat)] || ""   // this conversation's unsent text
     composeField.cursorPosition = composeField.length
@@ -1891,32 +1892,21 @@ FocusScope {
     }
   }
 
-  Process {
-    id: reactProc
-    property string chat: ""  // the conversation this run's tapback is in
-    property string lastErr: ""
-    // A Process that fails to start emits no exited (see BarWidget's collector):
-    // without this the pill would stay dimmed and the menu busy for good.
-    property bool sawExit: false
-    onRunningChanged: {
-      if (running) { sawExit = false; return }
-      Qt.callLater(function() {
-        if (!reactProc.sawExit && !reactProc.running) root.tapbackFailed(reactProc.chat, TapbackActions.TAPBACK_NOT_STARTED)
-      })
-    }
-    stderr: StdioCollector { onStreamFinished: reactProc.lastErr = text }
-    onExited: function(code, status) {
-      reactProc.sawExit = true
-      if (code === 0) {
+  // imsg-react runs in hostWidget (BarWidget), which outlives this view.
+  Connections {
+    target: root.hostWidget
+    function onTapbackExited(chat, ok) {
+      if (ok) {
         // the thread was left while it ran: nothing on screen is waiting for it
-        if (!root.inThread || String(root.active.chat) !== reactProc.chat) root.pendingTapback = null
+        if (!root.inThread || String(root.active.chat) !== chat) root.pendingTapback = null
         else if (root.pendingTapback) {
           root.pendingTapback = Object.assign({}, root.pendingTapback, { done: true })
           // the tool saw the row in chat.db before it exited: load now, not after reloadTimer
-          root.requestThreadLoad(reactProc.chat)
+          root.requestThreadLoad(chat)
         }
       } else {
-        root.tapbackFailed(reactProc.chat, TapbackActions.tapbackFailure(code, reactProc.lastErr))
+        root.pendingTapback = null
+        if (root.active && String(root.active.chat) === chat) root.note = root.hostWidget.takeTapbackFailure(chat)
       }
     }
   }
@@ -4148,26 +4138,18 @@ FocusScope {
   // One at a time: the menu's row is busy until then.
   readonly property bool tapbacksOn: hostWidget ? hostWidget.tapbacks === true : false
   property var pendingTapback: null
-  /** A failure in a conversation you had left: { chat, text }, shown when it is opened again. */
-  property var tapbackNote: null
-  function tapbackFailed(chat, text) {
-    root.pendingTapback = null
-    if (root.active && String(root.active.chat) === chat) root.note = text
-    else root.tapbackNote = { chat: chat, text: text }
-  }
-  readonly property bool tapbacksBusy: reactProc.running || pendingTapback !== null
+  readonly property bool tapbacksBusy: (hostWidget ? hostWidget.tapbackRunning === true : false) || pendingTapback !== null
   function sendTapback(message, kind) {
-    if (root.tapbacksBusy || !root.tapbacksOn || !TapbackActions.canTapback(message, root.activeIsGroup)) return
-    reactProc.chat = String(root.active.chat)
+    if (root.tapbacksBusy || !root.tapbacksOn || !hostWidget || !TapbackActions.canTapback(message, root.activeIsGroup)) return
+    var chat = String(root.active.chat)
     var current = TapbackActions.myTapback(message)
-    root.pendingTapback = TapbackActions.pendingTapback(reactProc.chat, String(message.guid), kind, current)
-    reactProc.lastErr = ""
-    reactProc.command = SourceId.bridgeArgv(reactProc.chat, "imsg-react", hostWidget ? hostWidget.binDir : root.home + "/bin")
+    var argv = SourceId.bridgeArgv(chat, "imsg-react", hostWidget.binDir)
       .concat(TapbackActions.tapbackArgs(String(message.guid), kind, current))
     // the dimmed pill says it is on its way; an earlier failure is old news
     if (root.note.indexOf("tapback: ") === 0) root.note = ""
-    root.tapbackNote = null
-    reactProc.running = true
+    hostWidget.takeTapbackFailure(chat)
+    root.pendingTapback = TapbackActions.pendingTapback(chat, String(message.guid), kind, current)
+    if (!hostWidget.runTapback(chat, argv)) root.pendingTapback = null
   }
   MessageMenu {
     id: messageMenu
