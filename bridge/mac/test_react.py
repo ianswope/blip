@@ -119,6 +119,10 @@ class FakeMessages:
     def performs(self):
         return [r for r in self.requests if r["mode"] == "perform"]
 
+    @property
+    def pickers(self):
+        return [r for r in self.requests if r["mode"] == "picker"]
+
 
 class NoSelf:
     detect_self_handles = staticmethod(list)
@@ -274,6 +278,15 @@ class React(unittest.TestCase):
         self.wait = patch.object(react, "ROW_WAIT", 0.05)
         self.wait.start()
         self.addCleanup(self.wait.stop)
+        clicked = patch.object(react, "click_picker_item", return_value="")
+        clicked.start()
+        self.addCleanup(clicked.stop)
+        logged = patch.object(react, "log_outcome")
+        logged.start()
+        self.addCleanup(logged.stop)
+        mac = patch.object(react, "macos_major", return_value=26)
+        mac.start()
+        self.addCleanup(mac.stop)
         env = patch.dict(react.os.environ, {"SSH_CONNECTION": ""})   # as if at the Mac
         env.start()
         self.addCleanup(env.stop)
@@ -305,6 +318,57 @@ class React(unittest.TestCase):
         self.assertEqual(stop.result["offered"], ["Coeur"])
         self.assertEqual(len(messages.performs), 1)
         self.assertEqual(self.ui.restored, ["Previous app"])
+
+    # macOS 27: a bubble offers Tapback Details… and none of the six.
+    MACOS27 = {"ok": False, "error": "not-offered", "offered": ["press", "Tapback Details…", "Reply…", "Copy"]}
+
+    def test_macos27_newest_message_goes_through_the_picker(self):
+        result, messages = self.run_react([self.MACOS27, {"ok": True, "lands": 2000}])
+        self.assertEqual((result["result"], result["type"]), ("added", 2000))
+        self.assertEqual(len(messages.pickers), 1)
+        self.assertEqual((messages.pickers[0]["text"], messages.pickers[0]["action"]), ("see you", "Heart"))
+        self.assertEqual(self.ui.restored, ["Previous app"])
+
+    def test_macos27_an_older_message_is_refused_before_any_picker(self):
+        add(self.con, 1, "N", "later", True, T0 + MINUTE)
+        stop, messages = self.run_react([self.MACOS27])
+        self.assertEqual((stop.exit_code, stop.result["code"]), (react.EX_UNSUPPORTED, "not-last"))
+        self.assertEqual(messages.pickers, [])
+
+    def test_macos27_a_later_tapback_does_not_make_it_older(self):
+        tapback(self.con, 1, "M", 2001, from_me=False, handle=2, date=T0 + MINUTE)
+        result, messages = self.run_react([self.MACOS27, {"ok": True, "lands": 2000}])
+        self.assertEqual(result["result"], "added")
+
+    def test_macos27_a_picker_on_another_message_presses_nothing(self):
+        stop, messages = self.run_react([self.MACOS27, {"ok": False, "error": "picker-elsewhere"}])
+        self.assertEqual((stop.exit_code, stop.result["code"]), (react.EX_TEMPFAIL, "picker-elsewhere"))
+        self.assertEqual(len(messages.pickers), 1)
+
+    def test_on_macos27_the_bubble_search_is_skipped(self):
+        with patch.object(react, "macos_major", return_value=27):
+            result, messages = self.run_react([{"ok": True, "lands": 2000}])
+        self.assertEqual(result["result"], "added")
+        self.assertEqual((len(messages.performs), len(messages.pickers)), (0, 1))
+
+    def test_on_macos27_an_older_message_touches_nothing(self):
+        add(self.con, 1, "N", "later", True, T0 + MINUTE)
+        with patch.object(react, "macos_major", return_value=27):
+            stop, messages = self.run_react([])
+        self.assertEqual(stop.result["code"], "not-last")
+        self.assertEqual(messages.requests, [])
+
+    def test_macos27_a_menu_click_that_fails_presses_nothing(self):
+        with patch.object(react, "macos_major", return_value=27), \
+             patch.object(react, "click_picker_item", return_value="no Edit menu"):
+            stop, messages = self.run_react([])
+        self.assertEqual(stop.result["code"], "no-picker")
+        self.assertEqual(messages.requests, [])
+
+    def test_a_renamed_action_without_the_macos27_sign_never_opens_the_picker(self):
+        stop, messages = self.run_react([{"ok": False, "error": "not-offered", "offered": ["Coeur"]}])
+        self.assertEqual(stop.result["code"], "not-offered")
+        self.assertEqual(messages.pickers, [])
 
     def test_no_row_is_reported_and_never_pressed_again(self):
         # A second press could land after a late first row and toggle it back.
@@ -453,8 +517,23 @@ class Consent(unittest.TestCase):
         self.assertIn("tccutil reset AppleEvents", react.system_events_consent(self.tcc([self.grant(0)])))
 
     def test_unreadable_or_unfamiliar_is_no(self):
-        self.assertIn("cannot confirm", react.system_events_consent("/nonexistent/TCC.db"))
+        self.assertIn("cannot confirm", react.system_events_consent("/nonexistent/TCC.db", probe=lambda: None))
         self.assertIn("cannot confirm", react.system_events_consent(self.tcc(schema="other")))
+
+    def test_without_a_user_tcc_db_macos_answers(self):
+        # macOS 27 keeps no per-user TCC.db; the prompt-free Apple event check decides.
+        missing = "/nonexistent/TCC.db"
+        self.assertEqual(react.system_events_consent(missing, probe=lambda: react.AE_GRANTED), "")
+        self.assertIn("blip-check --markread over ssh",
+                      react.system_events_consent(missing, probe=lambda: react.AE_WOULD_ASK))
+        self.assertIn("tccutil reset AppleEvents",
+                      react.system_events_consent(missing, probe=lambda: react.AE_DENIED))
+        self.assertIn("cannot confirm", react.system_events_consent(missing, probe=lambda: react.AE_NOT_RUNNING))
+
+    def test_a_tcc_db_that_exists_is_still_what_decides(self):
+        def never():
+            raise AssertionError("probe must not run when TCC.db is there")
+        self.assertEqual(react.system_events_consent(self.tcc([self.grant(2)]), probe=never), "")
 
 
 class Paging(unittest.TestCase):

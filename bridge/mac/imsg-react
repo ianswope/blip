@@ -14,6 +14,15 @@ and performing one does what the tapback menu does — measured on macOS 26.6,
 SIP on, under the Accessibility grant imsg-read already holds. Going through
 Messages means the tapback syncs like one sent from the phone.
 
+macOS 27 took those actions off the bubbles (measured 27.0.1: a bubble offers
+"Tapback Details…", "Reply…", "Copy" and the like, none of the six). What it
+kept is Edit ▸ "Tapback Last Message…", which opens the Tapback Picker on the
+conversation's newest message, with the six as buttons of the same names.
+Neither a click nor an AX press selects an older bubble, so on 27 only the
+newest message can take a tapback; anything older is refused (exit 65). The
+picker names the message it opened on, and nothing is pressed unless that is
+the target's text. chat.db still decides success.
+
 How one run goes:
   1. chat.db names the target: the message's text, its side, its minute, and
      how many identical bubbles (same text, side and minute) sit below it;
@@ -77,6 +86,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import platform
 import re
 import sqlite3
 import subprocess
@@ -96,6 +106,7 @@ TAPBACKS = {
     "question": ("Question mark", 5),
 }
 ACTIONS = [a for a, _ in TAPBACKS.values()]
+PICKER_SIGN = "Tapback Details…"   # a macOS 27 bubble: this action, none of ACTIONS
 TAPBACKS_BY_KIND = {k: a for a, k in TAPBACKS.values()}
 
 MAX_PAGES_DOWN = 3   # a transcript parked above the newest message
@@ -359,7 +370,7 @@ function frame(el) {
 // "2 reactions, You laughed at this, Ann loved this" sits before the time.
 // 12-hour clocks too.
 function parseLabel(d) {
-  const m = d.match(/^(.*), (\d{1,2})[:.](\d{2})(?:\s*([AP]M))?$/);
+  const m = d.match(/^([\s\S]*), (\d{1,2})[:.](\d{2})(?:\s*([AP]M))?$/);   // a body can span lines
   if (!m) return null;
   let h = parseInt(m[2], 10);
   if (m[4] === "PM" && h < 12) h += 12;
@@ -464,6 +475,41 @@ function scan(q) {
   }
   return res;
 }
+// macOS 27: bubbles no longer carry the tapbacks as actions. Edit ▸ "Tapback
+// Last Message…" opens the Tapback Picker on the newest message (the item is
+// named for what it does: "Tapback Message…" with a selection, which nothing
+// from here can make). The picker names its message ("Message, <text>"); it
+// must be the target's text, or nothing is pressed.
+function picker(q) {
+  const out = { ok: false };
+  // The menu click itself is click_picker_item()'s, from Python: a System
+  // Events click on this item can block until the picker closes (27.0.1).
+  let pk = null, label = null;
+  // The picker draws before the label naming its message: wait for both.
+  for (let n = 0; n < 15 && !(pk && label); n++) {
+    delay(0.3);
+    const els = safe(() => win().entireContents(), []);
+    const descs = els.map(e => String(safe(() => e.description(), "") || ""));
+    const at = descs.indexOf("Tapback Picker");
+    if (at < 0) continue;
+    pk = els[at];
+    label = descs.find(d => /^Message, /.test(d)) || null;
+  }
+  if (!pk) { out.error = "no-picker"; return out; }
+  const body = norm(String(label || "").replace(/^Message, /, ""));
+  if (!label || !bodyIs(body, q.text)) {
+    se.keyCode(53);
+    out.error = "picker-elsewhere";
+    return out;
+  }
+  const btn = safe(() => pk.entireContents(), []).find(e =>
+    safe(() => e.role(), "") === "AXButton" && String(safe(() => e.description(), "")) === q.action);
+  if (!btn) { se.keyCode(53); out.error = "not-offered"; out.offered = []; return out; }
+  // The action's NAME is AXPress; "press" is only its description.
+  try { btn.actions.byName("AXPress").perform(); out.ok = true; }
+  catch (e) { out.error = "perform-failed"; out.detail = String(e).slice(0, 200); }
+  return out;
+}
 function run() {
   const input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
   const q = JSON.parse(String(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(input, $.NSUTF8StringEncoding))));
@@ -480,6 +526,7 @@ function run() {
     try { c.el.actions()[i].perform(); return JSON.stringify({ ok: true }); }
     catch (e) { return JSON.stringify({ ok: false, error: "page-failed" }); }
   }
+  if (q.mode === "picker") return JSON.stringify(picker(q));
   const r = scan(q);
   if (r.error) return JSON.stringify({ ok: false, error: r.error });
   const out = { ok: false, atBottom: r.atBottom, seen: r.seen };
@@ -591,7 +638,60 @@ def perform(target: dict, action: str, run=jxa, deadline=None) -> dict:
 
 # ------------------------------------------------------------------ consent
 
-def system_events_consent(path: str = USER_TCC) -> str:
+# OSStatus answers of AEDeterminePermissionToAutomateTarget.
+AE_GRANTED, AE_DENIED, AE_WOULD_ASK, AE_NOT_RUNNING = 0, -1743, -1744, -600
+
+
+def ae_permission(bundle: str = "com.apple.systemevents"):
+    """Ask macOS whether this process may send Apple events to `bundle`,
+    with askUserIfNeeded=false: it answers and NEVER prompts. Needed on
+    macOS 27, which no longer keeps a per-user TCC.db where
+    system_events_consent reads one (measured 27.0.1: the folder is gone,
+    and the Automation grant is in neither TCC.db an ssh session can read,
+    while imsg-read's System Events calls succeed). The target must be
+    running or the answer is -600, so System Events is launched first,
+    hidden, through LaunchServices -- a launch is not an Apple event and
+    needs no consent. None when the call cannot be made at all."""
+    try:
+        import ctypes
+        import struct
+
+        cs = ctypes.CDLL("/System/Library/Frameworks/CoreServices.framework/CoreServices")
+
+        class AEDesc(ctypes.Structure):
+            _fields_ = [("descriptorType", ctypes.c_uint32), ("dataHandle", ctypes.c_void_p)]
+
+        def four(code: str) -> int:
+            return struct.unpack(">I", code.encode())[0]
+
+        cs.AECreateDesc.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_long, ctypes.POINTER(AEDesc)]
+        cs.AECreateDesc.restype = ctypes.c_int16
+        cs.AEDeterminePermissionToAutomateTarget.argtypes = [
+            ctypes.POINTER(AEDesc), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_bool]
+        cs.AEDeterminePermissionToAutomateTarget.restype = ctypes.c_int32
+        cs.AEDisposeDesc.argtypes = [ctypes.POINTER(AEDesc)]
+
+        subprocess.run(["open", "-g", "-j", "-b", bundle], capture_output=True, timeout=10)
+        raw = bundle.encode()
+        status = AE_NOT_RUNNING
+        for _ in range(20):   # launching takes about a second
+            desc = AEDesc()
+            if cs.AECreateDesc(four("bund"), raw, len(raw), ctypes.byref(desc)) != 0:
+                return None
+            try:
+                status = cs.AEDeterminePermissionToAutomateTarget(
+                    ctypes.byref(desc), four("****"), four("****"), False)
+            finally:
+                cs.AEDisposeDesc(ctypes.byref(desc))
+            if status != AE_NOT_RUNNING:
+                break
+            time.sleep(0.25)
+        return status
+    except Exception:
+        return None
+
+
+def system_events_consent(path: str = USER_TCC, probe=ae_permission) -> str:
     """"" when this run cannot raise a consent prompt nobody will answer,
     else why not. Over ssh, the first System Events call from
     sshd-keygen-wrapper is an Automation prompt on the Mac's screen, while
@@ -604,6 +704,20 @@ def system_events_consent(path: str = USER_TCC) -> str:
     Run at the Mac itself there is someone to click, and nothing is checked."""
     if not os.environ.get("SSH_CONNECTION"):
         return ""
+    if not os.path.exists(path):   # macOS 27: no per-user TCC.db; ask macOS instead
+        status = probe()
+        if status == AE_GRANTED:
+            return ""
+        if status == AE_WOULD_ASK:
+            return ("System Events has not been allowed for ssh on this Mac yet, and its prompt would go "
+                    "unanswered; run blip-check --markread over ssh while someone at the Mac clicks Allow")
+        if status == AE_DENIED:
+            return ("Automation for System Events is denied for sshd-keygen-wrapper; on the Mac run "
+                    "`tccutil reset AppleEvents`, then run blip-check --markread over ssh while someone at the "
+                    "Mac clicks Allow")
+        return (f"cannot confirm the Automation grant for System Events (no TCC.db, and macOS answered "
+                f"{status}), so nothing was done; run blip-check --markread over ssh while someone at the "
+                "Mac clicks Allow")
     try:
         with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)) as con:
             row = con.execute(
@@ -649,7 +763,12 @@ def react(con, target: dict, kind: int, remove: bool, self_handles: list, ui, ru
         if why:
             raise Stop("unavailable", EX_UNAVAILABLE, why)
         since = apple_now()
-        r = perform(target, action, run=run, deadline=deadline)
+        # macOS 27 bubbles carry no tapbacks, so the bubble search cannot even
+        # page (it pages with a live bubble's actions): straight to the picker.
+        r = (picker_route(con, target, action, run) if macos_major() >= 27
+             else perform(target, action, run=run, deadline=deadline))
+        if r.get("error") == "not-offered" and PICKER_SIGN in r.get("offered", []):
+            r = picker_route(con, target, action, run)   # a 27-style bubble on an older version
         if not r.get("ok") and r.get("error") not in MAYBE_PERFORMED:
             raise failure(r, action)   # nothing was pressed
         row = answer(con, target, self_handles, since)
@@ -666,8 +785,60 @@ def react(con, target: dict, kind: int, remove: bool, self_handles: list, ui, ru
             "seconds": round(time.monotonic() - started, 1)}
 
 
+def macos_major() -> int:
+    try:
+        return int(platform.mac_ver()[0].split(".")[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+CLICK_PICKER = """tell application "Messages" to activate
+delay 0.6
+ignoring application responses
+  tell application "System Events" to click menu item "Tapback Last Message…" of menu 1 of menu bar item "Edit" of menu bar 1 of process "Messages"
+end ignoring"""
+
+
+def click_picker_item() -> str:
+    """Edit ▸ Tapback Last Message…, without waiting for Messages to answer:
+    a System Events click on it can block until the picker closes (27.0.1,
+    by index and by name alike). "" or why it could not be sent."""
+    try:
+        r = subprocess.run(["/usr/bin/osascript", "-e", CLICK_PICKER], capture_output=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return "the menu click timed out"
+    return "" if r.returncode == 0 else r.stderr.decode("utf-8", "replace").strip()[-200:]
+
+
+def picker_route(con, target: dict, action: str, run, click=None) -> dict:
+    if not is_last(con, target):
+        raise Stop("not-last", EX_UNSUPPORTED,
+                   "on this macOS only the newest message in a conversation can take a tapback")
+    why = (click or click_picker_item)()
+    if why:
+        return {"ok": False, "error": "no-picker", "detail": why}
+    return run({"mode": "picker", "text": target["text"], "action": action})
+
+
+def is_last(con, target: dict) -> bool:
+    """Whether the target is the conversation's newest message: the one Edit ▸
+    Tapback Last Message… opens the picker on. Tapbacks and announcements are
+    not messages; Recently Deleted ones are not drawn."""
+    marks = ",".join("?" * len(target["chats"]))
+    row = con.execute(
+        f"""SELECT m.guid FROM message m JOIN chat_message_join j ON j.message_id = m.ROWID
+            WHERE j.chat_id IN ({marks}) AND m.associated_message_type = 0 AND m.item_type = 0
+              AND m.ROWID NOT IN (SELECT message_id FROM chat_recoverable_message_join)
+            ORDER BY m.date DESC, m.ROWID DESC LIMIT 1""", list(target["chats"])).fetchone()
+    return row is not None and row["guid"] in target["guids"]
+
+
 def failure(r: dict, action: str) -> Stop:
     error = r.get("error") or "failed"
+    if error == "picker-elsewhere":
+        return Stop(error, EX_TEMPFAIL, "the tapback picker opened on another message; nothing was done")
+    if error == "no-picker":
+        return Stop(error, EX_UNAVAILABLE, "Messages did not open its tapback picker; nothing was done")
     if error == "not-offered":
         return Stop("not-offered", EX_NOT_OFFERED,
                     f"the bubble does not offer '{action}' (Messages may have renamed it); nothing was done",
@@ -717,12 +888,32 @@ def main(argv=None) -> int:
         return emit(Stop("error", EX_SOFTWARE, f"{type(exc).__name__}: {exc}"))
 
 
+REACT_LOG = os.path.expanduser("~/.blip/react.log")
+
+
+def log_outcome(code: str, exit_code: int, seconds=None) -> None:
+    """One line per run beside the tools: when, the outcome code, the exit
+    status. Never a GUID or message text. Kept under 64 KB."""
+    try:
+        if os.path.exists(REACT_LOG) and os.path.getsize(REACT_LOG) > 65536:
+            os.replace(REACT_LOG, REACT_LOG + ".1")
+        line = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {code} exit={exit_code}"
+        if seconds is not None:
+            line += f" {seconds}s"
+        with open(REACT_LOG, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 def emit(result) -> int:
     if isinstance(result, Stop):
+        log_outcome(str(result.result.get("code", "?")), result.exit_code)
         if result.why:
             sys.stderr.write(f"imsg-react: {result.why}\n")
         print(json.dumps(result.result, ensure_ascii=False))
         return result.exit_code
+    log_outcome(str(result.get("result", "ok")), 0, result.get("seconds"))
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
