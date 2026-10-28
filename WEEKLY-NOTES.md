@@ -45,8 +45,13 @@ reconstructed on Sunday from memory.
   count unchanged at 2, so nothing was falsely muted. Ian saw 85 of 1,542. Deployed to the shared
   Mac bridge (only `imsg` changed). NOT fixed: Pin is missing from the Conversation menu on
   macOS 27 (it lives in the sidebar right-click menu there), and Ian's observation that the flag
-  stayed unset after a Hide Alerts click is unanswered because the verifier could not read his
-  chats; no live mute round trip was run (it drives Messages on Fred's Mac). Asked Ian to re-run
+  stayed unset after a Hide Alerts click is now answered: Fred approved a live round trip on his
+  self-thread only (a chat that carries `upiExpiryDate`, alerts on before), and on macOS 27.2
+  Hide Alerts was clicked but the conversation was not muted (exit 75), no `ignoreAlertsFlag`
+  appeared in chat.properties, chat.db has no mute column or table, and the following Show Alerts
+  found "'Show Alerts' was not available", so Messages itself did not toggle. The self-thread
+  ended exactly as it started (alerts on, same property keys). So on 27.x Hide Alerts and Pin both
+  need a different path than the Conversation menu; neither is designed yet. Asked Ian to re-run
   mute and unmute once on the updated bridge.
 
 ### Wed 28 Oct: #146 merged

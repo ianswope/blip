@@ -10,9 +10,11 @@
   binary plist are now clamped in place before the read, which moves no offset; nothing else about
   the blob changes. On a real macOS 27.2 gateway 164 of 3,309 chat rows were unreadable before and
   none after, with the muted count unchanged. The group-photo lookup reads the same blobs and gets
-  the same fix. **Not fixed here:** Pin missing from the Conversation menu on macOS 27, and whether
-  the Hide Alerts click itself takes effect there (Ian saw the flag stay unset after a click); both
-  stay open on #132. Deploy `bridge/mac/imsg` to the Mac (re-run `blip-setup` or `install.sh`).
+  the same fix. **Not fixed here:** Pin missing from the Conversation menu on macOS 27, and Hide Alerts
+  itself. On a real macOS 27.2 Mac the Conversation-menu click is accepted but Messages does not
+  mute: no flag is written and the menu still offers Hide Alerts afterwards (Ian saw the same on
+  27.0.1). With the read fixed Blip now says "Hide Alerts was clicked but the conversation is not
+  muted" instead of "cannot confirm". Both stay open on #132. Deploy `bridge/mac/imsg` to the Mac (re-run `blip-setup` or `install.sh`).
 
 - **Right-click a photo to copy or save it (#146, thanks @coltonfitzgerald).** A picture in a conversation now
   has its own menu: Open, Copy image (the picture itself on the clipboard,
