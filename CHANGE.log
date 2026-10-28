@@ -51,6 +51,12 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-28  #132 (half fixed, issue stays open) Hide Alerts is readable again on chats macOS 27 stamps with a year-1 date: out-of-range
+                 dates in a chat.properties binary plist are clamped in place before plistlib reads it, so alerts_flag() no
+                 longer answers "unknown" (164 of 3,309 chat rows on a real macOS 27.2 gateway before, 0 after, muted count
+                 unchanged). Reported and diagnosed by Ian Swope, github.com/ianswope, X https://x.com/ianfs. Fixed by
+                 Larry & Fred, github.com/nixfred, X https://x.com/nixfred. Still open: Pin missing from the Conversation
+                 menu on macOS 27, and whether the Hide Alerts click takes effect there.
 2026-10-28  #146 Right-click a photo in a conversation: Open, Copy image, Save image... (media and PDF chips get Open and Save...).
                  Save fetches the full original, offers the cached bytes' extension (HEIC as .jpg), writes 0600 and never
                  replaces a file (name (2).ext). Colton Fitzgerald, github.com/coltonfitzgerald, X: none found (checked

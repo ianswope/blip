@@ -31,6 +31,24 @@ reconstructed on Sunday from memory.
 
 - Nothing new yet. A reply from @coltonfitzgerald on #146 is awaited (X handle asked, 28 Oct).
 
+### Wed 28 Oct: #132 half fixed (issue stays open)
+
+- **#132 Hide Alerts is readable again on macOS 27 chats with a year-1 date.** Reported and
+  diagnosed by Ian Swope (https://x.com/ianfs), who tested #122 on macOS 27.0.1. macOS 27 stores
+  `upiExpiryDate` as Foundation's distantPast, two days older than the oldest date Python's
+  `datetime` holds, so the Mac's stock Python 3.9 dropped the WHOLE chat.properties dictionary and
+  the chat could never be listed as muted or verified. Fix: out-of-range dates in the binary plist
+  are clamped in place before the read (no offsets move), used by the mute check and the
+  group-photo lookup. Verified: Ian's trace reproduced on Linux, tests that fail on the old code,
+  all 19 bridge/mac suites, and the real macOS 27.2 gateway counted against its live chat.db
+  (counts only): 3,309 chat rows with properties, 164 unreadable before and 0 after, muted
+  count unchanged at 2, so nothing was falsely muted. Ian saw 85 of 1,542. Deployed to the shared
+  Mac bridge (only `imsg` changed). NOT fixed: Pin is missing from the Conversation menu on
+  macOS 27 (it lives in the sidebar right-click menu there), and Ian's observation that the flag
+  stayed unset after a Hide Alerts click is unanswered because the verifier could not read his
+  chats; no live mute round trip was run (it drives Messages on Fred's Mac). Asked Ian to re-run
+  mute and unmute once on the updated bridge.
+
 ### Wed 28 Oct: #146 merged
 
 - **#146 right-click a photo to open, copy or save it.** Colton Fitzgerald
