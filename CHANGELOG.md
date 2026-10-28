@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Hide Alerts is readable again on chats macOS 27 stamps with a year-1 date (#132, thanks
+  @ianswope).** macOS 27 writes `upiExpiryDate` as Foundation's `distantPast`, two days older than
+  the oldest date Python's `datetime` can hold, so the Mac's stock Python 3.9 refused the whole
+  `chat.properties` dictionary and `alerts_flag()` answered "unknown". That chat could never be
+  listed as muted, and Hide or Show Alerts on it could never be verified. Out-of-range dates in a
+  binary plist are now clamped in place before the read, which moves no offset; nothing else about
+  the blob changes. On a real macOS 27.2 gateway 164 of 3,309 chat rows were unreadable before and
+  none after, with the muted count unchanged. The group-photo lookup reads the same blobs and gets
+  the same fix. **Not fixed here:** Pin missing from the Conversation menu on macOS 27, and whether
+  the Hide Alerts click itself takes effect there (Ian saw the flag stay unset after a click); both
+  stay open on #132. Deploy `bridge/mac/imsg` to the Mac (re-run `blip-setup` or `install.sh`).
+
 - **Right-click a photo to copy or save it (#146, thanks @coltonfitzgerald).** A picture in a conversation now
   has its own menu: Open, Copy image (the picture itself on the clipboard,
   the same path as Ctrl+C on a picture bubble) and Save image…, which fetches

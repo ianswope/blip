@@ -1421,6 +1421,54 @@ def cmd_contacts(con, args):
         print(f"{fmt_ts_local(r['last_date'])}  {r['n']:>6}  {r['service']:>8}  {r['handle']}{suffix}")
 
 
+# The oldest and newest offsets from 2001-01-01 (a binary plist's epoch) that
+# datetime can hold, in seconds.
+_BPLIST_OLDEST = (dt.datetime.min - dt.datetime(2001, 1, 1)).total_seconds()
+_BPLIST_NEWEST = (dt.datetime.max - dt.datetime(2001, 1, 1)).total_seconds() - 1.0
+
+
+def _clamp_bplist_dates(blob: bytes) -> bytes | None:
+    """Foundation writes "no date" as year 1 (NSDate.distantPast, 63114076800
+    s before 2001), two days earlier than datetime.min. plistlib raises
+    OverflowError on it and the whole dictionary is lost: on macOS 27 a chat's
+    `upiExpiryDate` did that to 85 of 1542 chat rows (#132). A binary plist
+    date is always 0x33 plus an 8-byte float, so the out-of-range ones can be
+    rewritten in place without moving any offset. Returns None when `blob` is
+    not a well-formed bplist00 or holds no such date."""
+    try:
+        if len(blob) < 40 or blob[:8] != b"bplist00":
+            return None
+        off_size, _ref, count, _top, table = struct.unpack(">6xBBQQQ", blob[-32:])
+        end = len(blob) - 32
+        if off_size not in (1, 2, 4, 8) or table + count * off_size > end:
+            return None
+        out = bytearray(blob)
+        changed = False
+        for i in range(count):
+            at = int.from_bytes(blob[table + i * off_size:table + (i + 1) * off_size], "big")
+            if at + 9 > end or blob[at] != 0x33:
+                continue
+            secs = struct.unpack(">d", blob[at + 1:at + 9])[0]
+            if not _BPLIST_OLDEST <= secs <= _BPLIST_NEWEST:      # NaN fails both
+                out[at + 1:at + 9] = struct.pack(">d", _BPLIST_NEWEST if secs > 0 else _BPLIST_OLDEST)
+                changed = True
+        return bytes(out) if changed else None
+    except (struct.error, ValueError, OverflowError):
+        return None
+
+
+def _loads_chat_properties(blob):
+    """plistlib.loads for a chat.properties blob, tolerant of dates datetime
+    cannot represent. Raises what plistlib raises when the blob is not a plist."""
+    try:
+        return plistlib.loads(blob)
+    except (plistlib.InvalidFileException, ValueError, TypeError, OSError):
+        fixed = _clamp_bplist_dates(bytes(blob))
+        if fixed is None:
+            raise
+        return plistlib.loads(fixed)
+
+
 def alerts_flag(blob) -> bool | None:
     """Hide Alerts is chat.properties.ignoreAlertsFlag. A chat Messages never
     configured has no properties at all, which is "alerts on". None means the
@@ -1428,7 +1476,7 @@ def alerts_flag(blob) -> bool | None:
     if not blob:
         return False
     try:
-        props = plistlib.loads(blob)
+        props = _loads_chat_properties(blob)
     except (plistlib.InvalidFileException, ValueError, TypeError, OSError):
         return None
     return bool(props.get("ignoreAlertsFlag")) if isinstance(props, dict) else None
@@ -2026,7 +2074,7 @@ def _group_photo_path(con, chat_identifier: str) -> str:
         ids,
     ):
         try:
-            blob = plistlib.loads(r["properties"])
+            blob = _loads_chat_properties(r["properties"])
         except (plistlib.InvalidFileException, ValueError, TypeError, OSError):
             continue
         guid = blob.get("groupPhotoGuid") if isinstance(blob, dict) else None

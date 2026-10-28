@@ -1,10 +1,12 @@
 """Read pushes use synthetic IDs and mocked UI calls; never open Messages."""
 import contextlib
+import datetime
 import importlib.machinery
 import importlib.util
 import io
 import plistlib
 from pathlib import Path
+import struct
 import unittest
 import os
 import sqlite3
@@ -17,6 +19,18 @@ loader = importlib.machinery.SourceFileLoader("imsg_read", str(Path(__file__).wi
 spec = importlib.util.spec_from_loader(loader.name, loader)
 read = importlib.util.module_from_spec(spec)
 loader.exec_module(read)
+
+FOUNDATION_DISTANT_PAST = -63114076800.0   # NSDate.distantPast, as macOS 27 stores upiExpiryDate
+
+
+def year_one_props(props: dict) -> bytes:
+    """A chat.properties blob the way macOS 27 writes it: `upiExpiryDate` is
+    Foundation's year 1, two days older than datetime.min, so plistlib refuses
+    the whole dictionary (#132). Built by patching the one sentinel date."""
+    blob = plistlib.dumps({**props, "upiExpiryDate": datetime.datetime(2001, 1, 1)}, fmt=plistlib.FMT_BINARY)
+    marker = b"\x33" + bytes(8)                                  # a date of 0.0 s since 2001
+    assert blob.count(marker) == 1
+    return blob.replace(marker, b"\x33" + struct.pack(">d", FOUNDATION_DISTANT_PAST))
 
 
 class ReadTests(unittest.TestCase):
@@ -508,6 +522,30 @@ class ActionProbes(unittest.TestCase):
         with patch.object(read, "DB_PATH", str(Path(self.folder.name) / "missing" / "chat.db")):
             self.assertIsNone(read.chat_muted("+15550100002"))
 
+    def test_a_year_one_date_does_not_hide_the_mute_flag(self):
+        """#132: on macOS 27 `upiExpiryDate` is year 1, plistlib drops the whole
+        dictionary, and Hide/Show Alerts could never be verified for that chat."""
+        on = year_one_props({"ignoreAlertsFlag": True})
+        with self.assertRaises(plistlib.InvalidFileException):    # the premise
+            plistlib.loads(on)
+        self.set_props(2, on)
+        self.assertIs(read.chat_muted("+15550100001"), True)
+        self.set_props(2, year_one_props({"ignoreAlertsFlag": False}))
+        self.assertIs(read.chat_muted("+15550100001"), False)
+        self.set_props(2, year_one_props({"hasViewedPotentialSpamChat": True}))   # never configured
+        self.assertIs(read.chat_muted("+15550100001"), False)
+
+    def test_the_chat_list_counts_a_muted_chat_whose_date_is_year_one(self):
+        self.set_props(2, year_one_props({"ignoreAlertsFlag": True}))
+        mod = read.imsg_module()
+        con = read.open_db()
+        try:
+            clusters = mod._group_cluster_map(con)
+            muted = mod.muted_conversations(con, clusters)
+        finally:
+            con.close()
+        self.assertIn(clusters.get("+15550100001", "+15550100001"), muted)
+
     def test_chat_list_and_write_agree_on_a_muted_alias(self):
         """`imsg chats` reports muted over the same cluster the verifier checks."""
         self.set_props(2, plistlib.dumps({"ignoreAlertsFlag": True}))
@@ -521,6 +559,44 @@ class ActionProbes(unittest.TestCase):
         canon = clusters.get("+15550100001", "+15550100001")
         self.assertIn(canon, muted)
         self.assertNotIn("+15550100002", muted)
+
+
+class PlistDateTolerance(unittest.TestCase):
+    """_clamp_bplist_dates rewrites only dates datetime cannot hold, and only
+    in a well-formed binary plist; everything else is left to plistlib."""
+
+    def setUp(self):
+        self.imsg = read.imsg_module()
+
+    def test_out_of_range_dates_are_clamped_and_the_rest_survives(self):
+        for secs in (FOUNDATION_DISTANT_PAST, float("-inf"), float("nan"), 1e12, float("inf")):
+            blob = plistlib.dumps({"keep": "me", "n": 7, "d": datetime.datetime(2001, 1, 1)},
+                                  fmt=plistlib.FMT_BINARY)
+            blob = blob.replace(b"\x33" + bytes(8), b"\x33" + struct.pack(">d", secs))
+            with self.assertRaises((plistlib.InvalidFileException, ValueError)):
+                plistlib.loads(blob)
+            got = self.imsg._loads_chat_properties(blob)
+            self.assertEqual((got["keep"], got["n"]), ("me", 7), secs)
+            self.assertIsInstance(got["d"], datetime.datetime)
+
+    def test_ordinary_plists_and_non_plists_are_not_touched(self):
+        normal = plistlib.dumps({"ignoreAlertsFlag": True}, fmt=plistlib.FMT_BINARY)
+        self.assertIsNone(self.imsg._clamp_bplist_dates(normal))                 # nothing to fix
+        with_date = plistlib.dumps({"d": datetime.datetime(2026, 10, 4)}, fmt=plistlib.FMT_BINARY)
+        self.assertIsNone(self.imsg._clamp_bplist_dates(with_date))              # in-range date
+        for junk in (b"", b"garbage", b"bplist00", b"bplist00" + bytes(40), normal[:-5], normal[:20],
+                     plistlib.dumps({"a": 1}, fmt=plistlib.FMT_XML)):
+            self.assertIsNone(self.imsg._clamp_bplist_dates(junk), junk[:12])
+            if junk != plistlib.dumps({"a": 1}, fmt=plistlib.FMT_XML):
+                with self.assertRaises((plistlib.InvalidFileException, ValueError, TypeError)):
+                    self.imsg._loads_chat_properties(junk)
+
+    def test_a_corrupt_offset_table_cannot_loop_or_crash(self):
+        blob = bytearray(plistlib.dumps({"d": datetime.datetime(2001, 1, 1)}, fmt=plistlib.FMT_BINARY))
+        blob[-32:] = struct.pack(">6xBBQQQ", 8, 1, 2 ** 60, 0, 8)                # absurd object count
+        self.assertIsNone(self.imsg._clamp_bplist_dates(bytes(blob)))
+        blob[-32:] = struct.pack(">6xBBQQQ", 3, 1, 1, 0, 8)                      # impossible offset size
+        self.assertIsNone(self.imsg._clamp_bplist_dates(bytes(blob)))
 
 
 if __name__ == "__main__":

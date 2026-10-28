@@ -2,10 +2,12 @@
 """Regression: group photos live on item_type=3 rows that MESSAGE_SRC hides."""
 from __future__ import annotations
 
+import datetime
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 import plistlib
 import sqlite3
+import struct
 import sys
 import unittest
 from pathlib import Path
@@ -100,6 +102,26 @@ class GroupPhotoPath(unittest.TestCase):
             "INSERT INTO attachment (ROWID, filename, guid) VALUES (21, ?, ?)",
             (path, guid),
         )
+        got = self.imsg._group_photo_path(self.con, cid)
+        self.assertTrue(got.endswith("GroupPhotoImage"))
+
+
+    def test_group_photo_guid_survives_a_year_one_date_in_properties(self) -> None:
+        """#132: macOS 27 stores a year-1 upiExpiryDate, plistlib refused the whole
+        properties dictionary, and the group's photo was never found."""
+        cid = "053856bb0d9a40e392db59eace1c56d1"
+        path = "~/Library/Messages/Attachments/yy/GroupPhotoImage"
+        guid = "AAAA-PHOTO-GUID"
+        props = plistlib.dumps({"groupPhotoGuid": guid, "upiExpiryDate": datetime.datetime(2001, 1, 1)},
+                               fmt=plistlib.FMT_BINARY)
+        props = props.replace(b"\x33" + bytes(8), b"\x33" + struct.pack(">d", -63114076800.0))
+        with self.assertRaises(plistlib.InvalidFileException):    # the premise
+            plistlib.loads(props)
+        self.con.execute(
+            "INSERT INTO chat (ROWID, chat_identifier, display_name, style, properties) VALUES (1, ?, 'Named', 43, ?)",
+            (cid, props),
+        )
+        self.con.execute("INSERT INTO attachment (ROWID, filename, guid) VALUES (21, ?, ?)", (path, guid))
         got = self.imsg._group_photo_path(self.con, cid)
         self.assertTrue(got.endswith("GroupPhotoImage"))
 
