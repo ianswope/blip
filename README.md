@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hero.svg" alt="Blip — iMessage in the Omarchy bar" width="920">
+  <img src="docs/blip-hero@2x.png" alt="Blip: iMessage. On Linux. For real." width="920">
 </p>
 
 <h1 align="center">Blip</h1>
