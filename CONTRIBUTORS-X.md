@@ -50,6 +50,7 @@ Nobody right now.
 | David Reinecke | dreinecke | 1 (+ issues) | nothing published, 2026-09-25 |
 | cw228 | cw228 | 1 | nothing published; asked on the PR 2026-09-18 |
 | David Benedic | daveyb | 1 (cherry-picked) | nothing published; asked on #131 2026-10-04 |
+| Colton Fitzgerald | coltonfitzgerald | 1 | nothing on his GitHub profile or social accounts, coltonfitzgerald.me did not load, @coltonfitzgerald does not resolve on X, 2026-10-28; asked on #146 |
 | "Unhook Dev" | tolewis | 1 | nothing published, 2026-09-25 |
 
 ## Issue reporters who changed the code

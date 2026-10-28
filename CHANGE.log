@@ -41,6 +41,7 @@ PEOPLE (verified handles)
   John Zetterman    github.com/jzetterman   X https://x.com/jzetterman   (he said so on #140, 2026-10-16; X name matches)
   edmooredop        github.com/edmooredop   X: none found (checked 2026-10-21; asked Fred)
   Mark B            github.com/Fail-Safe    X https://x.com/_FailSafe (he said so himself on #148, 2026-10-25; checked 2026-10-28: GitHub profile twitter_username AND social accounts now publish it, `x user @_FailSafe` shows name "Mark B", 78 followers. The earlier @Fail_Safe is "Bob Boberson", NOT him)
+  Colton Fitzgerald github.com/coltonfitzgerald X: none found (checked 2026-10-28: GitHub profile and social accounts empty, coltonfitzgerald.me did not load, @coltonfitzgerald does not resolve on X; asked him on #146 and Fred)
   Fred Nix          github.com/nixfred      X https://x.com/nixfred
 
 Earlier contributors and their handles: CONTRIBUTORS-X-POST.md.
@@ -50,6 +51,11 @@ LAST X POST: CONTRIBUTORS-X-POST.md (2026-09-11). Everything below the
 marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 ------------------------------------------------------------------------
 
+2026-10-28  #146 Right-click a photo in a conversation: Open, Copy image, Save image... (media and PDF chips get Open and Save...).
+                 Save fetches the full original, offers the cached bytes' extension (HEIC as .jpg), writes 0600 and never
+                 replaces a file (name (2).ext). Colton Fitzgerald, github.com/coltonfitzgerald, X: none found (checked
+                 2026-10-28; asked on the PR). Finished in the merge by Larry & Fred, github.com/nixfred, X https://x.com/nixfred:
+                 changelog conflict, bidi characters as escapes, one new test, a VM screenshot.
 2026-10-24  #148 Allow or stop Blip toast notifications from a conversation's menu (right-click a row or pinned avatar, or the thread header's
                  ... button); edits the existing allowlist.json atomically, direct chats only. Mark B, github.com/Fail-Safe,
                  X https://x.com/_FailSafe (he gave it on the PR 2026-10-25; @Fail_Safe on X is a different person)

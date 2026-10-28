@@ -25,6 +25,33 @@ reconstructed on Sunday from memory.
 
 ---
 
+## 2026-W44 (Mon 26 Oct to Sun 1 Nov): OPEN, post due Sun 1 Nov
+
+### What people said this week (quote with attribution in the post)
+
+- Nothing new yet. A reply from @coltonfitzgerald on #146 is awaited (X handle asked, 28 Oct).
+
+### Wed 28 Oct: #146 merged
+
+- **#146 right-click a photo to open, copy or save it.** Colton Fitzgerald
+  (github.com/coltonfitzgerald; X: none found, asked on the PR). Right-click a picture
+  for Open, Copy image and Save image...; media and PDF chips get Open and Save....
+  Save fetches the full original, never the preview, opens a zenity picker in Downloads
+  with the attachment's own name (a HEIC is offered as .jpg), writes mode 0600 and never
+  replaces a file: a taken name becomes "name (2).ext". Verified: reviewed 21 Oct, merged
+  28 Oct onto main in a detached worktree, suite 790 passing, door classifier two-way, and
+  the merged tree run in a Test Drive VM through the real plugin with real right-click
+  input: Copy image put a 32,438-byte image/jpeg on the clipboard, Save image... wrote
+  ridge-1.jpg at 0600, and a second save to the same name wrote "ridge-1 (2).jpg" and
+  left the first file untouched (same mtime, byte-identical copies). Changed in the merge,
+  because the PR sat 7 days waiting on the author and main moved under it: the CHANGELOG
+  conflict with #148, the literal bidirectional characters in two regexes rewritten as
+  escapes (his 21 Oct review ask), and one new test, because deleting that bidi range left
+  all four of his save tests green. The screenshot his template asked for was taken by me,
+  docs/img/photo-context-menu.png. NOT verified: the Open row and the PDF file-chip menu
+  were not clicked (the demo fixtures only carry photos). gus has no zenity, so Save is not
+  usable on the live desktop until it is installed.
+
 ## 2026-W43 (Mon 19 Oct to Sun 25 Oct): OPEN, post due Sun 25 Oct
 
 ### What people said this week (quote with attribution in the post)
@@ -40,8 +67,8 @@ reconstructed on Sunday from memory.
   community is by far the most brilliant, eager, and giving Linux community I've ever
   associated with." He also gave his X handle (https://x.com/_FailSafe) and said he
   would contribute more if time allowed. Recorded 28 Oct, three days after he wrote it.
-- A reply from @coltonfitzgerald on #146 is still awaited (asked for a screenshot and
-  a small escape fix, 21 Oct).
+- Nothing from @coltonfitzgerald on #146 in the 7 days after the 21 Oct review (screenshot
+  and escape fix asked for). Merged 28 Oct with both done in the merge, see W44.
 
 ### Sat 24 Oct: #148 merged
 
