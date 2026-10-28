@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Right-click a photo to copy or save it (#146, thanks @coltonfitzgerald).** A picture in a conversation now
+  has its own menu: Open, Copy image (the picture itself on the clipboard,
+  the same path as Ctrl+C on a picture bubble) and Save image…, which fetches
+  the full original, opens a file picker in Downloads with the attachment's
+  own name, and writes a copy that never replaces an existing file. Media and
+  PDF chips get Open and Save…; anything Blip would not open is not offered
+  for saving either. The picker is `zenity`, as for Save vCard….
+
 - **Allow desktop notifications from a conversation's menu.** Right-click a
   person's row or pinned avatar, or use the thread header's ⋯ button, to allow
   or stop Blip toasts without editing JSON. Changes use the existing allowlist,
