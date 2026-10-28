@@ -35,7 +35,7 @@ tags are at the bottom.
 | Jared Moody | jaredmoody | https://x.com/jaredmoody | 1 (+ issue #144) | GitHub profile + social accounts, 2026-10-21 |
 | Barry Jones | brightball | https://x.com/brightball | 1 | linked from his site brightball.com; X name matches, 2026-10-21 |
 | John Zetterman | jzetterman | https://x.com/jzetterman | 1 | he said so himself on #140, 2026-10-16; X name matches |
-| Mark B | Fail-Safe | 1 | said so himself on #148 (2026-10-25); GitHub profile + social accounts publish it, `x user` name matches, 2026-10-28. NOT @Fail_Safe (that is "Bob Boberson"). Builds Omarchy plugins himself (omarchy-veil, omarchy-audiogram-eq, omarchy-dexcom) |
+| Mark B | Fail-Safe | https://x.com/_FailSafe | 1 | said so himself on #148 (2026-10-25); GitHub profile + social accounts publish it, `x user` name matches, 2026-10-28. NOT @Fail_Safe (that is "Bob Boberson"). Builds Omarchy plugins himself (omarchy-veil, omarchy-audiogram-eq, omarchy-dexcom) |
 
 ## Likely, waiting on Fred
 
