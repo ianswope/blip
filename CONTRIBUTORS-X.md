@@ -35,6 +35,7 @@ tags are at the bottom.
 | Jared Moody | jaredmoody | https://x.com/jaredmoody | 1 (+ issue #144) | GitHub profile + social accounts, 2026-10-21 |
 | Barry Jones | brightball | https://x.com/brightball | 1 | linked from his site brightball.com; X name matches, 2026-10-21 |
 | John Zetterman | jzetterman | https://x.com/jzetterman | 1 | he said so himself on #140, 2026-10-16; X name matches |
+| Mark B | Fail-Safe | 1 | said so himself on #148 (2026-10-25); GitHub profile + social accounts publish it, `x user` name matches, 2026-10-28. NOT @Fail_Safe (that is "Bob Boberson"). Builds Omarchy plugins himself (omarchy-veil, omarchy-audiogram-eq, omarchy-dexcom) |
 
 ## Likely, waiting on Fred
 
@@ -50,7 +51,6 @@ Nobody right now.
 | cw228 | cw228 | 1 | nothing published; asked on the PR 2026-09-18 |
 | David Benedic | daveyb | 1 (cherry-picked) | nothing published; asked on #131 2026-10-04 |
 | "Unhook Dev" | tolewis | 1 | nothing published, 2026-09-25 |
-| Mark B | Fail-Safe | 1 | nothing on his profile, social accounts or repo READMEs, 2026-10-24; X @Fail_Safe is "Bob Boberson" (0 followers, no posts), NOT him; asked on #148, Fred asked. Builds Omarchy plugins himself (omarchy-veil, omarchy-audiogram-eq, omarchy-dexcom) |
 
 ## Issue reporters who changed the code
 
@@ -63,7 +63,7 @@ on GitHub, no name or site (checked 2026-10-21); Fred asked.
 ## Paste block
 
 ```
-@ianfs @jondkinney @jefehoser @adamgamble @zachwilke_1 @jmythoren @gjouret @damonjanis @tlehmanifold @joshuaswarren @ezachrisen @jethrojones @bbishdotdev @badenpiland @followbl @StudioXRadio @chadstovern @GreyforgeLabs @bndnsmth @jaredmoody @brightball @jzetterman
+@ianfs @jondkinney @jefehoser @adamgamble @zachwilke_1 @jmythoren @gjouret @damonjanis @tlehmanifold @joshuaswarren @ezachrisen @jethrojones @bbishdotdev @badenpiland @followbl @StudioXRadio @chadstovern @GreyforgeLabs @bndnsmth @jaredmoody @brightball @jzetterman @_FailSafe
 ```
 
 Plus by name: Erik Fillipsveen (github.com/Fileri), joshhattan,

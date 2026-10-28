@@ -29,13 +29,24 @@ reconstructed on Sunday from memory.
 
 ### What people said this week (quote with attribution in the post)
 
-- Nothing new yet. A reply from @coltonfitzgerald on #146 is awaited (asked
-  for a screenshot and a small escape fix, 21 Oct).
+- **Mark B (https://x.com/_FailSafe) on #148, Sat 25 Oct, 01:53 UTC.** He tested
+  the question I could not: "Checked on two connected displays at 200% (internal
+  MacBook) and 125% (external via USB-C) scaling, using Blip components in an
+  isolated QuickShell with fictional contacts." Clicking the secondary bar opens
+  Blip on that display, the popout still uses the primary widget as its host,
+  "Allow Blip Notifications" is enabled, not "Unavailable", enabling and removing a
+  fictional sender from the secondary display saves correctly, and reopening from
+  the primary display shows both changes. On why he builds for Omarchy: "the Omarchy
+  community is by far the most brilliant, eager, and giving Linux community I've ever
+  associated with." He also gave his X handle (https://x.com/_FailSafe) and said he
+  would contribute more if time allowed. Recorded 28 Oct, three days after he wrote it.
+- A reply from @coltonfitzgerald on #146 is still awaited (asked for a screenshot and
+  a small escape fix, 21 Oct).
 
 ### Sat 24 Oct: #148 merged
 
 - **#148 allow or stop Blip notifications from a conversation's menu.**
-  Mark B (github.com/Fail-Safe; X: none found, asked on the PR and Fred). Right-click a
+  Mark B (github.com/Fail-Safe, https://x.com/_FailSafe, given by him on the PR 25 Oct). Right-click a
   direct conversation or pinned avatar, or use the thread header's ... button, to Allow or
   Stop Blip Notifications, instead of hand-editing allowlist.json. It edits that same file:
   atomic 0600 writes, refuses to overwrite a file that does not parse, one conversation's
@@ -45,9 +56,10 @@ reconstructed on Sunday from memory.
   screenshot is genuine harness output with fictional contacts. Changed in the merge: he had
   deleted two existing tests (the README's allowlist and mutelist examples load as written;
   the conversation menu matches Messages), both still pass against his code, so both were
-  restored. NOT verified: nobody clicked the menu on a live desktop, and it is unknown
-  whether a popout from a second monitor's bar (not the leader) can reach the allowlist
-  process; it would read "Blip Notifications Unavailable". He builds Omarchy plugins
+  restored. NOT verified at merge: nobody clicked the menu on a live desktop, and it was
+  unknown whether a popout from a second monitor's bar (not the leader) can reach the
+  allowlist process; it would read "Blip Notifications Unavailable". He then tested
+  two displays himself on 25 Oct and it works (see "What people said"). He builds Omarchy plugins
   himself (omarchy-veil, omarchy-audiogram-eq, omarchy-dexcom). Live on gus after the
   merge (shell restarted, `status` healthy, the DEPLOYED toast-allowlist.ts exercised
   against a temp file: create at mode 0600, idempotent set leaves the file byte-identical,
@@ -612,10 +624,6 @@ no session waives it. Fred approved each on 4 Oct.
   compactor would hit it.
 
 ### Handles Fred still needs to answer (asked 2026-09-18)
-- **Mark B** (github.com/Fail-Safe, #148, merged 24 Oct): nothing published on his
-  profile, social accounts or repo READMEs. @Fail_Safe on X is "Bob Boberson", 0
-  followers, no posts, so NOT him. Asked on the PR with "rather not be tagged"
-  offered. Untagged until he or Fred answers; do not guess.
 - **Brad Larson** (github.com/followbl, #113), asked 2026-09-23. Nothing
   published on GitHub or his site metaintro.com. https://x.com/followbl has
   the same unique login and the same name, 905 followers, posts about AI

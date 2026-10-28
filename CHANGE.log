@@ -40,7 +40,7 @@ PEOPLE (verified handles)
   Barry Jones       github.com/brightball   X https://x.com/brightball   (linked from his site brightball.com; X name "Barry Jones", 1.3k followers, checked 2026-10-21)
   John Zetterman    github.com/jzetterman   X https://x.com/jzetterman   (he said so on #140, 2026-10-16; X name matches)
   edmooredop        github.com/edmooredop   X: none found (checked 2026-10-21; asked Fred)
-  Mark B            github.com/Fail-Safe    X: none found (checked 2026-10-24: profile, social accounts, repo READMEs; @Fail_Safe is "Bob Boberson", not him; asked Fred)
+  Mark B            github.com/Fail-Safe    X https://x.com/_FailSafe (he said so himself on #148, 2026-10-25; checked 2026-10-28: GitHub profile twitter_username AND social accounts now publish it, `x user @_FailSafe` shows name "Mark B", 78 followers. The earlier @Fail_Safe is "Bob Boberson", NOT him)
   Fred Nix          github.com/nixfred      X https://x.com/nixfred
 
 Earlier contributors and their handles: CONTRIBUTORS-X-POST.md.
@@ -52,7 +52,7 @@ marker for Post 2 is in the Post 2 draft in X-POSTS.md.
 
 2026-10-24  #148 Allow or stop Blip toast notifications from a conversation's menu (right-click a row or pinned avatar, or the thread header's
                  ... button); edits the existing allowlist.json atomically, direct chats only. Mark B, github.com/Fail-Safe,
-                 X: none found (checked 2026-10-24; @Fail_Safe on X is a different person; asked on the PR and Fred)
+                 X https://x.com/_FailSafe (he gave it on the PR 2026-10-25; @Fail_Safe on X is a different person)
 2026-10-21  #143 Security-code toasts fire for alphanumeric sender IDs (msverify, Google, HSBC): the code gate no longer reads a
                  sender whose chat is its own handle as a group; sending is unchanged. Reported by edmooredop, github.com/edmooredop,
                  X: none found (checked 2026-10-21). Fixed by Larry & Fred, github.com/nixfred, X https://x.com/nixfred
